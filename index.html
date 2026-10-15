@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="theme-color" content="#f8f3ef">
+	<meta name="description" content="You're invited to celebrate the debut of Hannah Joyce Bumatay at Santa Maria Auditorium.">
+	<title>Hannah Joyce Bumatay | Her Debut</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
+	<link rel="stylesheet" href="style.css">
+	<script src="script.js" defer></script>
+</head>
+<body>
+	<div class="entry-screen" id="entry-screen" role="dialog" aria-modal="true" aria-labelledby="entry-title">
+		<form class="entry-card" id="entry-form">
+			<p class="eyebrow">A special invitation</p>
+			<div class="entry-flower" aria-hidden="true">✿</div>
+			<h1 id="entry-title">You're invited<br>to celebrate <em>Hannah</em></h1>
+			<p class="entry-copy">Please enter your name to open your invitation.</p>
+			<label class="visually-hidden" for="guest-name">Your name</label>
+			<input id="guest-name" name="guestName" type="text" autocomplete="name" placeholder="Enter your name" required maxlength="100" autofocus>
+			<button class="button-link entry-button" type="submit">Open invitation <span aria-hidden="true">↗</span></button>
+			<p class="entry-note">We can't wait to celebrate with you.</p>
+		</form>
+	</div>
+
+	<header class="site-header">
+		<a class="wordmark" href="#home" aria-label="Hannah Joyce Bumatay, home">H <span>✿</span> J</a>
+		<nav aria-label="Main navigation">
+			<a href="#our-day">A note</a>
+			<a href="#details">The details</a>
+			<a class="nav-rsvp" href="#rsvp">RSVP <span aria-hidden="true">↗</span></a>
+		</nav>
+	</header>
+
+	<main>
+		<section class="hero" id="home" aria-labelledby="hero-title" tabindex="-1">
+			<div class="hero-image" role="img" aria-label="Soft blush flowers in warm evening light"></div>
+			<div class="hero-shade"></div>
+			<div class="hero-copy">
+				<p class="eyebrow hero-eyebrow">An evening to remember</p>
+				<p class="hero-intro">Please join us for the debut of</p>
+				<h1 id="hero-title">Hannah Joyce<br><em>Bumatay</em></h1>
+				<p class="hero-date">A celebration of love, laughter &amp; new beginnings</p>
+				<a class="hero-link" href="#our-day">Discover the celebration <span aria-hidden="true">↓</span></a>
+			</div>
+			<span class="hero-index" aria-hidden="true">A NIGHT TO CELEBRATE</span>
+		</section>
+
+		<section class="intro section-wrap" id="our-day">
+			<p class="eyebrow">A little note</p>
+			<h2>A beautiful new chapter<br>begins with <em>you.</em></h2>
+			<p class="intro-copy">With grateful hearts, we invite you to celebrate a milestone in Hannah's life. Your presence will make this special day even more meaningful. Join us for an evening filled with joy, cherished memories, and the people she loves most.</p>
+			<div class="flourish" aria-hidden="true"><span></span>✿<span></span></div>
+		</section>
+
+		<section class="details" id="details" aria-labelledby="details-title">
+			<div class="details-photo" role="img" aria-label="An elegant table dressed for a special celebration"></div>
+			<div class="details-panel">
+				<p class="eyebrow">Save the date</p>
+				<h2 id="details-title">Let's make<br><em>memories</em></h2>
+				<div class="detail-rule"></div>
+				<div class="detail-row">
+					<span class="detail-label">Celebrating</span>
+					<p>Hannah Joyce Bumatay<br><span>Her debut celebration</span></p>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">When</span>
+					<p>Date &amp; time to be announced<br><span>We look forward to celebrating with you</span></p>
+				</div>
+				<div class="detail-row">
+					<span class="detail-label">Where</span>
+					<p>Santa Maria Auditorium<br><span>Santa Maria</span></p>
+				</div>
+				<a class="text-link" href="https://maps.google.com/?q=Santa+Maria+Auditorium" target="_blank" rel="noreferrer">Find the venue <span aria-hidden="true">↗</span></a>
+			</div>
+		</section>
+
+		<section class="closing" id="rsvp">
+			<p class="eyebrow">Kindly reply</p>
+			<h2>Will you join<br><em>the celebration?</em></h2>
+			<p class="rsvp-copy">Choose an option below and your email app will open with your name and reply ready to send.</p>
+			<div class="rsvp-actions">
+				<a class="button-link" id="rsvp-yes" href="mailto:samuelbumatay918@gmail.com?subject=Debut%20RSVP%20-%20Yes">Yes, I'll be there <span aria-hidden="true">↗</span></a>
+				<a class="button-link button-secondary" id="rsvp-no" href="mailto:samuelbumatay918@gmail.com?subject=Debut%20RSVP%20-%20Unable%20to%20attend">Sorry, I can't make it <span aria-hidden="true">↗</span></a>
+			</div>
+			<p class="closing-date">Hannah Joyce Bumatay <span>·</span> Her Debut</p>
+		</section>
+	</main>
+
+	<footer class="site-footer">
+		<span>Made with love for Hannah's special day</span>
+		<a href="#home">Back to top ↑</a>
+	</footer>
+</body>
+</html>
