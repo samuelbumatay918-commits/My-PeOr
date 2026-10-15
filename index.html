@@ -1,98 +1,321 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<meta name="theme-color" content="#f8f3ef">
-	<meta name="description" content="You're invited to celebrate the debut of Hannah Joyce Bumatay at Santa Maria Auditorium.">
-	<title>Hannah Joyce Bumatay | Her Debut</title>
-	<link rel="preconnect" href="https://fonts.googleapis.com">
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
-	<link rel="stylesheet" href="style.css">
-	<script src="script.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore the portfolio of Samuel Bumatay, a BS Computer Science student showcasing programming practice, assistive technology projects, and creative web development.">
+  <meta name="theme-color" content="#070B14">
+  <title>Samuel Bumatay | Computer Science Student & Developer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Orbitron:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
 </head>
 <body>
-	<div class="entry-screen" id="entry-screen" role="dialog" aria-modal="true" aria-labelledby="entry-title">
-		<form class="entry-card" id="entry-form">
-			<p class="eyebrow">A special invitation</p>
-			<div class="entry-flower" aria-hidden="true">✿</div>
-			<h1 id="entry-title">You're invited<br>to celebrate <em>Hannah</em></h1>
-			<p class="entry-copy">Please enter your name to open your invitation.</p>
-			<label class="visually-hidden" for="guest-name">Your name</label>
-			<input id="guest-name" name="guestName" type="text" autocomplete="name" placeholder="Enter your name" required maxlength="100" autofocus>
-			<button class="button-link entry-button" type="submit">Open invitation <span aria-hidden="true">↗</span></button>
-			<p class="entry-note">We can't wait to celebrate with you.</p>
-		</form>
-	</div>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="#home" aria-label="Samuel Bumatay home">SAMUEL <span>BUMATAY</span></a>
 
-	<header class="site-header">
-		<a class="wordmark" href="#home" aria-label="Hannah Joyce Bumatay, home">H <span>✿</span> J</a>
-		<nav aria-label="Main navigation">
-			<a href="#our-day">A note</a>
-			<a href="#details">The details</a>
-			<a class="nav-rsvp" href="#rsvp">RSVP <span aria-hidden="true">↗</span></a>
-		</nav>
-	</header>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
 
-	<main>
-		<section class="hero" id="home" aria-labelledby="hero-title" tabindex="-1">
-			<div class="hero-image" role="img" aria-label="Soft blush flowers in warm evening light"></div>
-			<div class="hero-shade"></div>
-			<div class="hero-copy">
-				<p class="eyebrow hero-eyebrow">An evening to remember</p>
-				<p class="hero-intro">Please join us for the debut of</p>
-				<h1 id="hero-title">Hannah Joyce<br><em>Bumatay</em></h1>
-				<p class="hero-date">A celebration of love, laughter &amp; new beginnings</p>
-				<a class="hero-link" href="#our-day">Discover the celebration <span aria-hidden="true">↓</span></a>
-			</div>
-			<span class="hero-index" aria-hidden="true">A NIGHT TO CELEBRATE</span>
-		</section>
+      <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+        <a href="#home">Home</a>
+        <a href="#about">About Me</a>
+        <a href="#skills">Skills</a>
+        <a href="#projects">Projects</a>
+        <a href="#contact">Contact</a>
+        <a class="cta-button nav-cta" href="#contact">Let's Connect</a>
+      </nav>
+    </header>
 
-		<section class="intro section-wrap" id="our-day">
-			<p class="eyebrow">A little note</p>
-			<h2>A beautiful new chapter<br>begins with <em>you.</em></h2>
-			<p class="intro-copy">With grateful hearts, we invite you to celebrate a milestone in Hannah's life. Your presence will make this special day even more meaningful. Join us for an evening filled with joy, cherished memories, and the people she loves most.</p>
-			<div class="flourish" aria-hidden="true"><span></span>✿<span></span></div>
-		</section>
+    <main>
+      <section class="hero section" id="home">
+        <div class="hero-visual" aria-hidden="true">
+          <div class="orb orb-cyan"></div>
+          <div class="orb orb-purple"></div>
+          <div class="scan-lines"></div>
+          <div class="code-window">
+            <div class="window-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="code-content">
+              <span>const</span>
+              <span class="accent">developer</span>
+              <span>=</span>
+              <span class="accent">"Samuel";</span>
+            </div>
+          </div>
+        </div>
 
-		<section class="details" id="details" aria-labelledby="details-title">
-			<div class="details-photo" role="img" aria-label="An elegant table dressed for a special celebration"></div>
-			<div class="details-panel">
-				<p class="eyebrow">Save the date</p>
-				<h2 id="details-title">Let's make<br><em>memories</em></h2>
-				<div class="detail-rule"></div>
-				<div class="detail-row">
-					<span class="detail-label">Celebrating</span>
-					<p>Hannah Joyce Bumatay<br><span>Her debut celebration</span></p>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">When</span>
-					<p>Date &amp; time to be announced<br><span>We look forward to celebrating with you</span></p>
-				</div>
-				<div class="detail-row">
-					<span class="detail-label">Where</span>
-					<p>Santa Maria Auditorium<br><span>Santa Maria</span></p>
-				</div>
-				<a class="text-link" href="https://maps.google.com/?q=Santa+Maria+Auditorium" target="_blank" rel="noreferrer">Find the venue <span aria-hidden="true">↗</span></a>
-			</div>
-		</section>
+        <div class="hero-content">
+          <p class="eyebrow">Computer Science Student</p>
+          <h1>Hi, I'm Samuel Bumatay.</h1>
+          <p class="hero-subtitle" aria-live="polite">BS Computer Science Student | Aspiring Software Developer | Creative Web Designer</p>
+          <p class="lead">I'm a Computer Science student passionate about technology, programming, computer troubleshooting, and creating useful digital experiences. I enjoy exploring different areas of computing, developing projects, and improving my technical skills through continuous learning.</p>
 
-		<section class="closing" id="rsvp">
-			<p class="eyebrow">Kindly reply</p>
-			<h2>Will you join<br><em>the celebration?</em></h2>
-			<p class="rsvp-copy">Choose an option below and your email app will open with your name and reply ready to send.</p>
-			<div class="rsvp-actions">
-				<a class="button-link" id="rsvp-yes" href="mailto:samuelbumatay918@gmail.com?subject=Debut%20RSVP%20-%20Yes">Yes, I'll be there <span aria-hidden="true">↗</span></a>
-				<a class="button-link button-secondary" id="rsvp-no" href="mailto:samuelbumatay918@gmail.com?subject=Debut%20RSVP%20-%20Unable%20to%20attend">Sorry, I can't make it <span aria-hidden="true">↗</span></a>
-			</div>
-			<p class="closing-date">Hannah Joyce Bumatay <span>·</span> Her Debut</p>
-		</section>
-	</main>
+          <div class="hero-actions">
+            <a class="button primary" href="#projects">Explore My Projects</a>
+            <button class="button secondary resume-button" type="button" id="resume-button" aria-disabled="true" disabled>Resume Coming Soon</button>
+            <a class="text-link" href="#contact">Contact Me</a>
+          </div>
+        </div>
 
-	<footer class="site-footer">
-		<span>Made with love for Hannah's special day</span>
-		<a href="#home">Back to top ↑</a>
-	</footer>
+        <div class="hero-meta" aria-label="Quick profile summary">
+          <div class="meta-card">
+            <span class="meta-label">Focus</span>
+            <strong>Software & Web</strong>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">Interest</span>
+            <strong>Problem Solving</strong>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">Approach</span>
+            <strong>Build & Learn</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="section about-section" id="about">
+        <div class="section-heading">
+          <p class="eyebrow">About Me</p>
+          <h2>A Student Exploring the World of Technology</h2>
+        </div>
+
+        <div class="about-layout">
+          <p class="about-copy">
+            Hello! I'm Samuel Bumatay, a BS Computer Science student interested in programming, web development, and computer hardware troubleshooting. I enjoy learning how technology works and using my knowledge to create practical and creative digital projects.
+          </p>
+          <p class="about-copy">
+            Through academic projects and personal practice, I continue to develop my problem-solving, technical, and communication skills. My goal is to strengthen my abilities as a developer, gain real-world experience, and build technology solutions that are useful to others.
+          </p>
+        </div>
+
+        <div class="info-grid">
+          <article class="info-card">
+            <span class="info-index">01</span>
+            <h3>Computer Science</h3>
+            <p>Focused on learning programming, computing concepts, and software development.</p>
+          </article>
+
+          <article class="info-card">
+            <span class="info-index">02</span>
+            <h3>Technical Exploration</h3>
+            <p>Interested in troubleshooting computers and exploring different programming languages.</p>
+          </article>
+
+          <article class="info-card">
+            <span class="info-index">03</span>
+            <h3>Creative Development</h3>
+            <p>Enjoys creating digital projects, including interactive invitations and software programs.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section skills-section" id="skills">
+        <div class="section-heading">
+          <p class="eyebrow">Technical Arsenal</p>
+          <h2>Skills and Technologies I'm Developing</h2>
+        </div>
+
+        <div class="skills-grid">
+          <article class="skill-card">
+            <div class="skill-icon" aria-hidden="true">C++</div>
+            <h3>C++ Programming</h3>
+            <p>Practice writing programs and applying programming fundamentals.</p>
+          </article>
+
+          <article class="skill-card">
+            <div class="skill-icon" aria-hidden="true">Java</div>
+            <h3>Java Programming</h3>
+            <p>Learning and practicing object-oriented programming and Java fundamentals.</p>
+          </article>
+
+          <article class="skill-card">
+            <div class="skill-icon" aria-hidden="true">Web</div>
+            <h3>Web Development</h3>
+            <p>Interested in building websites with structured layouts, interactive elements, and responsive designs.</p>
+          </article>
+
+          <article class="skill-card">
+            <div class="skill-icon" aria-hidden="true">PC</div>
+            <h3>Computer Troubleshooting</h3>
+            <p>Interested in identifying computer hardware issues, understanding components, and performing basic troubleshooting.</p>
+          </article>
+
+          <article class="skill-card">
+            <div class="skill-icon" aria-hidden="true">Com</div>
+            <h3>Communication</h3>
+            <p>Developing the ability to communicate clearly, exchange ideas, and work effectively with others.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section projects-section" id="projects">
+        <div class="section-heading">
+          <p class="eyebrow">Featured Projects</p>
+          <h2>Academic Work, Programming Practice, and Creative Digital Projects</h2>
+        </div>
+
+        <div class="projects-grid">
+          <article class="project-card">
+            <div class="project-visual visual-pathbot" role="img" aria-label="Robotics-inspired interface showing a robot and home navigation layout"></div>
+            <div class="project-body">
+              <div class="project-meta">
+                <span class="project-tag">Academic / Assistive Technology</span>
+              </div>
+              <h3>PathBot</h3>
+              <p class="project-label">Capstone Project</p>
+              <p>PathBot is an active wayfinding and assistive robot concept designed to help home-based patients with mild dementia navigate predefined indoor routes. The project explores accessible destination selection, guided movement, and remote communication to support navigation within a single-story indoor environment.</p>
+              <ul class="feature-list">
+                <li>Button-operated destination selection</li>
+                <li>Predefined indoor navigation routes</li>
+                <li>Remote communication and monitoring concepts</li>
+                <li>Assistive technology focused on accessibility</li>
+              </ul>
+              <div class="project-actions">
+                <button class="button small ghost project-detail" type="button" data-project="pathbot">View Details</button>
+                <span class="project-status">Academic project</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="project-card">
+            <div class="project-visual visual-cpp" role="img" aria-label="Dark code terminal with C++ syntax highlighting"></div>
+            <div class="project-body">
+              <div class="project-meta">
+                <span class="project-tag">Programming / Software Development</span>
+              </div>
+              <h3>C++ Programming Projects</h3>
+              <p class="project-label">Practice Collection</p>
+              <p>A collection of C++ practice programs created to strengthen my understanding of programming logic, problem-solving, and software development fundamentals.</p>
+              <div class="project-mini-grid">
+                <span>Project name</span>
+                <span>Short description</span>
+                <span>Technologies used</span>
+              </div>
+              <div class="project-actions">
+                <button class="button small ghost project-detail" type="button" data-project="cpp">View Details</button>
+                <button class="button small plain" type="button" disabled aria-disabled="true">Code Placeholder</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="project-card">
+            <div class="project-visual visual-debut" role="img" aria-label="Elegant digital invitation preview with event elements"></div>
+            <div class="project-body">
+              <div class="project-meta">
+                <span class="project-tag">Creative Web Development</span>
+              </div>
+              <h3>Online Debut Invitation</h3>
+              <p class="project-label">Interactive concept</p>
+              <p>An online debut invitation concept designed to present event details through a visually engaging digital experience. The project combines creative presentation with web-based interaction.</p>
+              <ul class="feature-list">
+                <li>Event details</li>
+                <li>Date, time, and venue</li>
+                <li>Interactive invitation elements</li>
+                <li>Mobile-friendly presentation</li>
+              </ul>
+              <div class="project-actions">
+                <button class="button small ghost project-detail" type="button" data-project="debut">View Details</button>
+                <span class="project-status">Concept project</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="project-card">
+            <div class="project-visual visual-wedding" role="img" aria-label="Romantic invitation style with elegant typography and floral details"></div>
+            <div class="project-body">
+              <div class="project-meta">
+                <span class="project-tag">Creative Web Development</span>
+              </div>
+              <h3>Online Wedding Invitation</h3>
+              <p class="project-label">Responsive concept</p>
+              <p>An online wedding invitation concept focused on presenting celebration details in an elegant, accessible, and interactive digital format.</p>
+              <ul class="feature-list">
+                <li>Wedding details</li>
+                <li>Date, time, and venue</li>
+                <li>Interactive invitation design</li>
+                <li>Responsive mobile layout</li>
+              </ul>
+              <div class="project-actions">
+                <button class="button small ghost project-detail" type="button" data-project="wedding">View Details</button>
+                <span class="project-status">Concept project</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section contact-section" id="contact">
+        <div class="contact-layout">
+          <div class="contact-copy">
+            <p class="eyebrow">Let's Connect</p>
+            <h2>Have a project idea, opportunity, or question? Feel free to reach out.</h2>
+            <p>I'm open to learning opportunities, collaborative ideas, and creative digital projects. If you'd like to connect, use the form or reach out through a placeholder contact channel below.</p>
+            <ul class="contact-list">
+              <li><a href="mailto:[YOUR EMAIL ADDRESS]">[YOUR EMAIL ADDRESS]</a></li>
+              <li><a href="[YOUR GITHUB PROFILE URL]" target="_blank" rel="noreferrer">[YOUR GITHUB PROFILE URL]</a></li>
+              <li><a href="[YOUR LINKEDIN PROFILE URL]" target="_blank" rel="noreferrer">[YOUR LINKEDIN PROFILE URL]</a></li>
+            </ul>
+          </div>
+
+          <form class="contact-form" id="contact-form" novalidate>
+            <div class="field-group">
+              <label for="full-name">Full Name</label>
+              <input id="full-name" name="full-name" type="text" placeholder="Your name" required>
+              <small class="error-message" id="full-name-error" aria-live="polite"></small>
+            </div>
+
+            <div class="field-group">
+              <label for="email">Email Address</label>
+              <input id="email" name="email" type="email" placeholder="you@example.com" required>
+              <small class="error-message" id="email-error" aria-live="polite"></small>
+            </div>
+
+            <div class="field-group">
+              <label for="subject">Subject</label>
+              <input id="subject" name="subject" type="text" placeholder="Project inquiry" required>
+              <small class="error-message" id="subject-error" aria-live="polite"></small>
+            </div>
+
+            <div class="field-group">
+              <label for="message">Message</label>
+              <textarea id="message" name="message" rows="5" placeholder="Tell me about your idea..." required></textarea>
+              <small class="error-message" id="message-error" aria-live="polite"></small>
+            </div>
+
+            <button class="button primary submit-button" type="submit">Send Message</button>
+            <p class="form-status" id="form-status" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>© <span id="year"></span> Samuel Bumatay. All rights reserved.</p>
+      <div class="footer-links">
+        <a href="#home">Home</a>
+        <a href="#about">About</a>
+        <a href="#projects">Projects</a>
+        <a href="#contact">Contact</a>
+      </div>
+      <p class="footer-note">Designed with curiosity. Built through continuous learning.</p>
+    </footer>
+  </div>
+
+  <div class="project-modal" id="project-modal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card" tabindex="-1">
+      <button class="modal-close" type="button" aria-label="Close project details">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
 </body>
 </html>
