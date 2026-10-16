@@ -24,7 +24,8 @@
   };
   var freshState = function () {
     return {
-      tasks: [], schedule: [], subjects: [], assessments: [], exams: [], studySessions: [], habits: [], habitLogs: [],
+      tasks: [], schedule: [], classSchedules: [], subjects: [], assessments: [], exams: [], studySessions: [], flashcards: [], habits: [], habitLogs: [],
+      timetablePreferences: { startHour: 7, endHour: 21 },
       preferences: { name: '', theme: 'system', timezone: 'Asia/Manila', dateFormat: 'medium', timeFormat: '12h', focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, notifications: false, sidebarCollapsed: false },
       timer: { phase: 'focus', status: 'idle', endAt: null, remainingMs: 25 * 60000, focusCount: 0, completedSessions: [] },
       quoteIndex: 0,
@@ -48,6 +49,12 @@
   var showDismissedNotifications = false;
   var calendarDate = parseDate(todayKey());
   var calendarView = 'month';
+  var scheduleTab = 'timetable';
+  var academicsTab = 'subjects';
+  var timetableView = 'week';
+  var timetableWeekOffset = 0;
+  var timetableDay = new Date().getDay();
+  var revealedFlashcards = new Set();
   var selectedDate = todayKey();
   var progressRange = 'week';
   var customRange = { start: todayKey(), end: todayKey() };
@@ -73,11 +80,12 @@
     var base = Object.assign(freshState(), source);
     base.preferences = Object.assign(freshState().preferences, source.preferences || {});
     base.timer = Object.assign(freshState().timer, source.timer || {});
+    base.timetablePreferences = Object.assign(freshState().timetablePreferences, source.timetablePreferences || {});
     if (!Array.isArray(base.timer.completedSessions)) {
       if (source.timer && source.timer.completedSessions !== undefined) throw new Error('Backup timer sessions must be a list.');
       base.timer.completedSessions = [];
     }
-    var arrayKeys = ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications', 'dismissedReminders'];
+    var arrayKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications', 'dismissedReminders'];
     arrayKeys.forEach(function (key) {
       if (source[key] !== undefined && !Array.isArray(source[key])) throw new Error('Backup field "' + key + '" must be a list.');
       if (!Array.isArray(base[key])) base[key] = [];
@@ -88,8 +96,13 @@
     if (source.timer !== undefined && (!source.timer || typeof source.timer !== 'object' || Array.isArray(source.timer))) {
       throw new Error('Backup timer data must be an object.');
     }
+    if (source.timetablePreferences !== undefined && (!source.timetablePreferences || typeof source.timetablePreferences !== 'object' || Array.isArray(source.timetablePreferences))) {
+      throw new Error('Backup timetable preferences must be an object.');
+    }
+    base.timetablePreferences.startHour = Math.max(0, Math.min(23, Number(base.timetablePreferences.startHour) || 0));
+    base.timetablePreferences.endHour = Math.max(base.timetablePreferences.startHour + 1, Math.min(24, Number(base.timetablePreferences.endHour) || 24));
     var ids = new Set();
-    ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications'].forEach(function (key) {
+    ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications'].forEach(function (key) {
       base[key].forEach(function (item) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Backup field "' + key + '" contains an invalid item.');
         if (!item.id || ids.has(item.id)) {
@@ -613,7 +626,13 @@
     var max = options.max != null ? ' max="' + options.max + '"' : '';
     var step = options.step ? ' step="' + options.step + '"' : '';
     var content;
-    if (type === 'textarea') {
+    if (type === 'days') {
+      var selectedDays = Array.isArray(value) ? value : [];
+      content = '<div class="weekday-options">' + options.choices.map(function (choice) {
+        var checked = selectedDays.indexOf(choice.value) >= 0 ? ' checked' : '';
+        return '<label><input type="checkbox" name="' + name + '" value="' + escapeHtml(choice.value) + '"' + checked + '><span>' + escapeHtml(choice.label) + '</span></label>';
+      }).join('') + '</div>';
+    } else if (type === 'textarea') {
       content = '<textarea id="' + id + '" name="' + name + '"' + placeholder + required + '>' + escapeHtml(value || '') + '</textarea>';
     } else if (type === 'select') {
       content = '<select id="' + id + '" name="' + name + '"' + required + '>' + options.choices.map(function (choice) {
@@ -671,6 +690,27 @@
         { label: 'Subject', name: 'subjectId', type: 'select', choices: [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; })) },
         { label: 'Description', name: 'description', type: 'textarea', full: true },
         { label: 'Reminders', name: 'reminderOffsets', type: 'reminders' }
+      ];
+    } else if (type === 'classSchedule') {
+      title = id ? 'Edit class schedule' : 'Add class schedule';
+      fields = [
+        { label: 'Subject name', name: 'subjectName', type: 'text', required: true },
+        { label: 'Subject code', name: 'subjectCode', type: 'text', hint: 'Optional' },
+        { label: 'Link saved subject', name: 'subjectId', type: 'select', choices: [{ value: '', label: 'No linked subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; })) },
+        { label: 'Days of the week', name: 'days', type: 'days', required: true, full: true, choices: [{ value: '1', label: 'Monday' }, { value: '2', label: 'Tuesday' }, { value: '3', label: 'Wednesday' }, { value: '4', label: 'Thursday' }, { value: '5', label: 'Friday' }, { value: '6', label: 'Saturday' }, { value: '0', label: 'Sunday' }] },
+        { label: 'Start time', name: 'startTime', type: 'time', required: true },
+        { label: 'End time', name: 'endTime', type: 'time', required: true },
+        { label: 'Classroom or location', name: 'location', type: 'text', hint: 'Optional' },
+        { label: 'Instructor', name: 'instructor', type: 'text', hint: 'Optional' },
+        { label: 'Class color', name: 'color', type: 'color', value: '#5368d8' },
+        { label: 'Notes', name: 'notes', type: 'textarea', full: true }
+      ];
+    } else if (type === 'flashcard') {
+      title = id ? 'Edit flashcard' : 'Add flashcard';
+      fields = [
+        { label: 'Subject', name: 'subjectId', type: 'select', choices: [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; })) },
+        { label: 'Question / front', name: 'question', type: 'textarea', required: true, full: true },
+        { label: 'Answer / back', name: 'answer', type: 'textarea', required: true, full: true }
       ];
     } else if (type === 'subject') {
       title = id ? 'Edit subject' : 'Add subject';
@@ -798,7 +838,12 @@
     var deadlines = buildDeadlineRecords().filter(function (item) {
       return item.status !== 'Completed' && item.days >= -1 && item.days <= 7;
     }).sort(function (a, b) { return a.dueAt - b.dueAt; }).slice(0, 5);
-    var schedule = state.schedule.filter(function (item) { return item.date === today; }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); }).slice(0, 4);
+    var todayDay = parseDate(today).getDay();
+    var schedule = state.schedule.filter(function (item) { return item.date === today; }).map(function (item) {
+      return { id: item.id, kind: 'schedule', title: item.title, startTime: item.startTime, endTime: item.endTime, subject: subjectName(item.subjectId), location: '', action: 'edit-schedule' };
+    }).concat(state.classSchedules.filter(function (item) { return classForDay(item, todayDay); }).map(function (item) {
+      return { id: item.id, kind: 'class', title: item.subjectName, startTime: item.startTime, endTime: item.endTime, subject: item.subjectCode || '', location: item.location || '', action: 'edit-class' };
+    })).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); }).slice(0, 6);
     var highPriority = state.tasks.filter(function (task) {
       return task.status !== 'Completed' && (task.priority === 'High' || task.priority === 'Urgent');
     }).sort(function (a, b) {
@@ -823,7 +868,7 @@
     return notice +
       '<div class="welcome-row"><div><p class="eyebrow">Your overview</p><h1 class="greeting">' + currentTimeGreeting() + (state.preferences.name ? ', ' + escapeHtml(state.preferences.name) : '') + '</h1><p class="greeting-sub">Let’s make today productive.</p>' +
       '<div class="progress-line"><span>Daily progress</span><span class="progress-track"><span class="progress-fill" style="display:block;width:' + percent + '%"></span></span><span>' + percent + '%</span></div></div><div class="date-label">' + escapeHtml(new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(parseDate(today))) + '</div></div>' +
-      '<div class="dashboard-actions"><button class="button primary" data-action="add-task">＋ Add task</button><button class="button" data-action="add-schedule">＋ Add event</button><button class="button" data-action="add-study">＋ Add study session</button><button class="button" data-page-link="tasks">View all tasks →</button></div>' +
+      '<div class="dashboard-actions"><button class="button primary" data-action="add-task">＋ Add task</button><button class="button" data-action="add-class">＋ Add class</button><button class="button" data-action="add-schedule">＋ Add event</button><button class="button" data-action="add-study">＋ Add study session</button><button class="button" data-page-link="tasks">View all tasks →</button></div>' +
       '<section class="summary-grid">' +
       summaryCard('Tasks Today', completed + ' / ' + todays.length, remaining + ' remaining · ' + percent + '% complete', '☷') +
       summaryCard('Overdue', String(overdueTasks.length), 'Incomplete past deadlines', '!') +
@@ -834,8 +879,8 @@
       '<section class="card"><div class="card-title-row"><h2>Tasks due today</h2><button class="text-button" data-page-link="tasks">View all tasks</button></div>' +
       (todays.length ? '<div class="task-list">' + todays.sort(function (a, b) { return (a.dueTime || '').localeCompare(b.dueTime || ''); }).map(function (task) { return taskMarkup(task, false); }).join('') + '</div>' : emptyState('You’re all caught up.', 'Add a task to get started.', 'add-task', 'Add a task')) + '</section>' +
       (overdueTasks.length ? '<section class="card"><div class="card-title-row"><h2>Overdue tasks</h2><button class="text-button" data-page-link="deadlines">Review deadlines</button></div><div class="task-list">' + overdueTasks.slice(0, 4).map(function (task) { return taskMarkup(task, false); }).join('') + '</div></section>' : '') +
-      '<section class="card"><div class="card-title-row"><h2>Daily schedule</h2><button class="text-button" data-page-link="schedule">Open schedule</button></div>' +
-      (schedule.length ? schedule.map(function (item) { return '<div class="schedule-row"><span class="summary-icon">◷</span><div class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(timeLabel(item.startTime)) + ' – ' + escapeHtml(timeLabel(item.endTime)) + (item.subjectId ? ' · ' + escapeHtml(subjectName(item.subjectId)) : '') + '</small></div></div>'; }).join('') : emptyState('No schedule for today.', 'Add a block to plan your routine.', 'add-schedule', 'Add schedule block')) + '</section></div>' +
+      '<section class="card"><div class="card-title-row"><h2>Today’s classes &amp; schedule</h2><button class="text-button" data-page-link="schedule">Open schedule</button></div>' +
+      (schedule.length ? schedule.map(function (item) { return '<button class="schedule-row text-button w-100" data-action="' + item.action + '" data-id="' + escapeHtml(item.id) + '"><span class="summary-icon">' + (item.kind === 'class' ? '▤' : '◷') + '</span><div class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(timeLabel(item.startTime)) + ' – ' + escapeHtml(timeLabel(item.endTime)) + (item.subject ? ' · ' + escapeHtml(item.subject) : '') + (item.location ? ' · ' + escapeHtml(item.location) : '') + '</small></div></button>'; }).join('') : emptyState('No classes or activities planned for today.', 'Add a recurring class or a dated schedule block.', 'add-class', 'Add Class Schedule')) + '</section></div>' +
       '<div class="stack"><section class="card"><div class="card-title-row"><h2>Upcoming deadlines</h2><span class="muted">Tasks &amp; exams</span></div>' +
       (deadlines.length ? deadlines.map(deadlineDashboardRow).join('') : emptyState('No upcoming deadlines.', 'You have a clear week ahead.')) +
       (upcomingEvents.length ? '<div class="card-title-row" style="margin-top:15px"><h3>Upcoming events</h3><button class="text-button" data-page-link="calendar">Calendar</button></div>' + upcomingEvents.map(deadlineDashboardRow).join('') : '') + '</section>' +
@@ -968,11 +1013,17 @@
     state.schedule.forEach(function (item) {
       records.push({ id: item.id, kind: 'event', collection: 'schedule', title: item.title, description: item.description || '', subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: 'Medium', status: 'Scheduled', date: item.date || '', time: item.startTime || '', category: item.category || 'Event', action: 'edit-schedule' });
     });
+    state.classSchedules.forEach(function (item) {
+      records.push({ id: item.id, kind: 'class', collection: 'classSchedules', title: item.subjectName, description: [item.subjectCode, item.instructor, item.location, item.notes, (item.days || []).join(' ')].filter(Boolean).join(' '), subjectId: '', subject: item.subjectName, priority: '', status: 'Recurring', date: '', time: item.startTime || '', category: 'Class', action: 'edit-class' });
+    });
     state.studySessions.forEach(function (item) {
       records.push({ id: item.id, kind: 'study', collection: 'studySessions', title: item.topic, description: item.notes || '', subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: 'Medium', status: item.status || 'Planned', date: item.date || '', time: item.startTime || '', category: 'Study session', action: 'edit-study' });
     });
     state.subjects.forEach(function (item) {
       records.push({ id: item.id, kind: 'subject', collection: 'subjects', title: item.name, description: [item.code, item.instructor, item.period, item.description].filter(Boolean).join(' '), subjectId: item.id, subject: item.name, priority: '', status: '', date: '', time: '', category: 'Subject', action: 'edit-subject' });
+    });
+    state.flashcards.forEach(function (item) {
+      records.push({ id: item.id, kind: 'reviewer', collection: 'flashcards', title: item.question, description: item.answer, subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: '', status: 'Saved', date: '', time: '', category: 'Reviewer', action: 'edit-flashcard' });
     });
     state.assessments.forEach(function (item) {
       records.push({ id: item.id, kind: 'assessment', collection: 'assessments', title: item.name, description: subjectName(item.subjectId) + ' ' + item.score + '/' + item.maximum, subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: '', status: '', date: item.date || '', time: '', category: 'Assessment', action: 'edit-assessment' });
@@ -1012,7 +1063,7 @@
     });
     return pageHeading('Search results', 'Search tasks, descriptions, subjects, exams, events, study sessions, grades, and habits.', '<button class="button" data-action="search-reset">Reset filters</button>') +
       '<section class="card"><div class="filter-grid">' +
-      filterControl('Item type', 'search-type', searchFilters.type, [['all', 'All items'], ['task', 'Tasks'], ['event', 'Events'], ['exam', 'Exams'], ['study', 'Study sessions'], ['subject', 'Subjects'], ['assessment', 'Assessments'], ['habit', 'Habits']]) +
+      filterControl('Item type', 'search-type', searchFilters.type, [['all', 'All items'], ['task', 'Tasks'], ['class', 'Classes'], ['event', 'Events'], ['exam', 'Exams'], ['study', 'Study sessions'], ['subject', 'Subjects'], ['assessment', 'Assessments'], ['reviewer', 'Reviewers'], ['habit', 'Habits']]) +
       filterControl('Subject', 'search-subject', searchFilters.subject, [['all', 'All subjects']].concat(state.subjects.map(function (item) { return [item.id, item.name]; }))) +
       filterControl('Priority', 'search-priority', searchFilters.priority, [['all', 'All priorities'], ['Urgent', 'Urgent'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low']]) +
       filterControl('Status', 'search-status', searchFilters.status, [['all', 'All statuses'], ['incomplete', 'Incomplete'], ['completed', 'Completed'], ['high', 'High priority']]) +
@@ -1097,6 +1148,11 @@
     state.schedule.filter(function (item) { return item.date === key; }).forEach(function (item) {
       result.push({ id: item.id, kind: 'schedule', title: item.title, time: item.startTime, type: 'schedule' });
     });
+    state.classSchedules.filter(function (item) {
+      return classForDay(item, parseDate(key).getDay());
+    }).forEach(function (item) {
+      result.push({ id: item.id, kind: 'class', title: item.subjectName, time: item.startTime, type: 'schedule' });
+    });
     state.exams.filter(function (item) { return item.date === key; }).forEach(function (item) {
       result.push({ id: item.id, kind: 'exam', title: item.title, time: item.time || '', type: 'exam' });
     });
@@ -1110,7 +1166,7 @@
     return result.sort(function (a, b) { return a.time.localeCompare(b.time); });
   }
 
-  function renderCalendar() {
+  function renderCalendar(integrated) {
     var year = calendarDate.getFullYear();
     var month = calendarDate.getMonth();
     var monthStart = new Date(year, month, 1);
@@ -1125,7 +1181,7 @@
       cells += '<button class="calendar-cell' + (date.getMonth() !== month ? ' outside' : '') + (key === todayKey() ? ' today' : '') + (key === selectedDate ? ' selected' : '') + '" data-action="select-date" data-date="' + key + '" aria-label="' + escapeHtml(date.toLocaleDateString()) + ', ' + events.length + ' activities"><span class="day-number">' + date.getDate() + '</span><span class="calendar-events">' + events.slice(0, 3).map(function (event) { return '<span class="calendar-event ' + event.type + '">' + escapeHtml((event.time ? timeLabel(event.time) + ' ' : '') + event.title) + '</span>'; }).join('') + (events.length > 3 ? '<span class="small-note">+' + (events.length - 3) + ' more</span>' : '') + '</span></button>';
     }
     var selected = calendarEvents(selectedDate);
-    return pageHeading('Calendar', 'Your tasks, exams, study sessions, and schedule in one view.', '<button class="button" data-action="calendar-today">Today</button><button class="button primary" data-action="add-calendar-item">＋ Add to date</button>') +
+    return (integrated ? '' : pageHeading('Calendar', 'Your tasks, exams, study sessions, and schedule in one view.', '<button class="button" data-action="calendar-today">Today</button><button class="button primary" data-action="add-calendar-item">＋ Add to date</button>')) +
       '<section class="card"><div class="calendar-top"><div class="heading-actions"><button class="icon-button" data-action="calendar-prev" aria-label="Previous month">‹</button><button class="icon-button" data-action="calendar-next" aria-label="Next month">›</button><strong class="calendar-title">' + escapeHtml(title) + '</strong><input type="date" name="calendar-date" aria-label="Select date" value="' + escapeHtml(selectedDate) + '" style="width:auto;min-height:32px;padding:5px 8px"></div><div class="segmented"><button class="' + (calendarView === 'month' ? 'selected' : '') + '" data-action="calendar-view" data-value="month">Month</button><button class="' + (calendarView === 'week' ? 'selected' : '') + '" data-action="calendar-view" data-value="week">Week</button><button class="' + (calendarView === 'day' ? 'selected' : '') + '" data-action="calendar-view" data-value="day">Day</button></div></div>' +
       (calendarView === 'month' ? '<div class="calendar-grid">' + days.map(function (day) { return '<div class="calendar-head">' + day + '</div>'; }).join('') + cells + '</div>' :
         renderCalendarList(calendarView)) + '</section>' +
@@ -1152,11 +1208,11 @@
   }
 
   function calendarEventRow(event, hasDate) {
-    var action = event.kind === 'task' ? 'edit-task' : event.kind === 'schedule' ? 'edit-schedule' : event.kind === 'exam' ? 'edit-exam' : event.kind === 'habit' ? 'edit-habit' : 'edit-study';
-    return '<button class="schedule-row text-button w-100" data-action="' + action + '" data-id="' + escapeHtml(event.id) + '"><span class="summary-icon">' + (event.kind === 'exam' ? '◇' : event.kind === 'schedule' ? '◷' : event.kind === 'study' ? '◎' : '☷') + '</span><span class="row-info"><strong>' + escapeHtml(event.title) + '</strong><small>' + escapeHtml(hasDate ? dateLabel(event.date) + ' · ' : '') + escapeHtml(event.time ? timeLabel(event.time) : event.kind) + '</small></span><span class="calendar-event ' + event.type + '">' + escapeHtml(event.kind) + '</span></button>';
+    var action = event.kind === 'task' ? 'edit-task' : event.kind === 'schedule' ? 'edit-schedule' : event.kind === 'class' ? 'edit-class' : event.kind === 'exam' ? 'edit-exam' : event.kind === 'habit' ? 'edit-habit' : 'edit-study';
+    return '<button class="schedule-row text-button w-100" data-action="' + action + '" data-id="' + escapeHtml(event.id) + '"><span class="summary-icon">' + (event.kind === 'exam' ? '◇' : event.kind === 'class' ? '▤' : event.kind === 'schedule' ? '◷' : event.kind === 'study' ? '◎' : '☷') + '</span><span class="row-info"><strong>' + escapeHtml(event.title) + '</strong><small>' + escapeHtml(hasDate ? dateLabel(event.date) + ' · ' : '') + escapeHtml(event.time ? timeLabel(event.time) : event.kind) + '</small></span><span class="calendar-event ' + event.type + '">' + escapeHtml(event.kind) + '</span></button>';
   }
 
-  function renderSchedule() {
+  function renderDatedSchedule(integrated) {
     var items = state.schedule.filter(function (item) { return item.date === selectedDate; }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); });
     var overlapIds = new Set();
     items.forEach(function (item, index) {
@@ -1176,16 +1232,100 @@
       (overlapIds.has(item.id) ? '<small class="danger-text">This activity overlaps another schedule block.</small>' : '') + '</div></div></div>';
     }).join('');
     var dateObject = parseDate(selectedDate);
-    return pageHeading('Daily Schedule', 'Build a realistic routine and see how your day fits together.', '<button class="button" data-action="schedule-today">Today</button><button class="button primary" data-action="add-schedule">＋ Add block</button>') +
-      '<section class="card"><div class="calendar-top"><div class="heading-actions"><button class="icon-button" data-action="schedule-prev" aria-label="Previous day">‹</button><strong class="calendar-title">' + escapeHtml(dateObject.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })) + '</strong><button class="icon-button" data-action="schedule-next" aria-label="Next day">›</button></div><input style="width:auto" type="date" name="schedule-date" value="' + escapeHtml(selectedDate) + '" aria-label="Schedule date"></div>' +
+    return (integrated ? '' : pageHeading('Daily Schedule', 'Build a realistic routine and see how your day fits together.', '<button class="button" data-action="schedule-today">Today</button><button class="button primary" data-action="add-schedule">＋ Add block</button>')) +
+      '<section class="card"><div class="calendar-top"><div class="heading-actions"><button class="icon-button" data-action="schedule-prev" aria-label="Previous day">‹</button><strong class="calendar-title">' + escapeHtml(dateObject.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })) + '</strong><button class="icon-button" data-action="schedule-next" aria-label="Next day">›</button><button class="button" data-action="schedule-today">Today</button></div><div class="heading-actions"><input style="width:auto" type="date" name="schedule-date" value="' + escapeHtml(selectedDate) + '" aria-label="Schedule date"><button class="button primary" data-action="add-schedule">＋ Add activity</button></div></div>' +
       '<div class="notice info" style="margin-bottom:14px">Schedule is stored locally. Overlapping activities are flagged so you can adjust them.</div>' +
       (items.length ? '<div class="timeline">' + timeline + '</div>' : emptyState('No schedule created for this day.', 'Plan classes, focused study, breaks, and personal time.', 'add-schedule', 'Add schedule block')) + '</section>';
   }
 
-  function renderSubjects() {
+  function weekStartDate() {
+    var date = parseDate(todayKey());
+    date.setDate(date.getDate() - ((date.getDay() + 6) % 7) + timetableWeekOffset * 7);
+    return date;
+  }
+
+  function classForDay(classItem, day) {
+    return (classItem.days || []).indexOf(String(day)) >= 0;
+  }
+
+  function timetableDayColumn(day, startHour, endHour, hideOtherDays) {
+    var rangeStart = startHour * 60;
+    var rangeEnd = endHour * 60;
+    var items = state.classSchedules.filter(function (item) {
+      return classForDay(item, day) && item.startTime < item.endTime &&
+        Number(item.endTime.slice(0, 2)) * 60 + Number(item.endTime.slice(3, 5)) > rangeStart &&
+        Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5)) < rangeEnd;
+    }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); });
+    var lanes = [];
+    items.forEach(function (item) {
+      var start = Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5));
+      var end = Number(item.endTime.slice(0, 2)) * 60 + Number(item.endTime.slice(3, 5));
+      var lane = 0;
+      while (lanes[lane] && lanes[lane].some(function (other) { return start < other.end && other.start < end; })) lane += 1;
+      if (!lanes[lane]) lanes[lane] = [];
+      lanes[lane].push({ start: start, end: end, item: item });
+    });
+    var laneCount = Math.max(1, lanes.length);
+    var height = (endHour - startHour) * 68;
+    return '<div class="timetable-day-column' + (timetableDay === day ? ' selected' : '') + (hideOtherDays && timetableDay !== day ? ' hidden-day' : '') + '" data-weekday="' + day + '">' +
+      '<div class="timetable-day-body" style="height:' + height + 'px">' + items.map(function (item) {
+        var start = Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5));
+        var end = Number(item.endTime.slice(0, 2)) * 60 + Number(item.endTime.slice(3, 5));
+        var overlaps = items.some(function (other) { return other.id !== item.id && item.startTime < other.endTime && other.startTime < item.endTime; });
+        var top = Math.max(0, (start - rangeStart) / 60 * 68);
+        var blockHeight = Math.max(36, (Math.min(end, rangeEnd) - Math.max(start, rangeStart)) / 60 * 68 - 3);
+        return '<article class="timetable-class' + (overlaps ? ' has-overlap' : '') + '" title="' + escapeHtml([item.instructor, item.notes].filter(Boolean).join(' · ')) + '" style="top:' + top + 'px;height:' + blockHeight + 'px;left:calc(' + (lanes.findIndex(function (lane) { return lane.some(function (entry) { return entry.item.id === item.id; }); }) * 100 / laneCount) + '% + 2px);width:calc(' + (100 / laneCount) + '% - 4px);--class-color:' + escapeHtml(/^#[0-9a-f]{6}$/i.test(item.color || '') ? item.color : '#5368d8') + '" data-action="edit-class" data-id="' + escapeHtml(item.id) + '">' +
+          '<strong>' + escapeHtml(item.subjectName) + '</strong><small>' + escapeHtml(timeLabel(item.startTime) + '–' + timeLabel(item.endTime)) + '</small>' +
+          (item.subjectCode ? '<small>' + escapeHtml(item.subjectCode) + '</small>' : '') +
+          (item.location ? '<small>' + escapeHtml(item.location) + '</small>' : '') +
+          (item.instructor ? '<small>' + escapeHtml(item.instructor) + '</small>' : '') +
+          (overlaps ? '<span class="class-overlap-warning">Overlaps</span>' : '') +
+          '<span class="class-actions"><button data-action="edit-class" data-id="' + escapeHtml(item.id) + '" aria-label="Edit class schedule">✎</button><button data-action="delete-class" data-id="' + escapeHtml(item.id) + '" aria-label="Delete class schedule">×</button></span></article>';
+      }).join('') + '</div></div>';
+  }
+
+  function renderWeeklyTimetable() {
+    var startHour = Number(state.timetablePreferences.startHour);
+    var endHour = Number(state.timetablePreferences.endHour);
+    var mobileTimetable = window.matchMedia('(max-width: 780px)').matches;
+    var weekStart = weekStartDate();
+    var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+    var dayLabels = [1, 2, 3, 4, 5, 6, 0];
+    var times = '';
+    for (var hour = startHour; hour < endHour; hour += 1) {
+      times += '<div class="timetable-hour-label">' + escapeHtml(timeLabel(String(hour).padStart(2, '0') + ':00')) + '</div>';
+    }
+    var dayColumns = dayLabels.map(function (day) {
+      return timetableDayColumn(day, startHour, endHour, mobileTimetable || timetableView === 'day');
+    }).join('');
+    var mobileDay = timetableDayColumn(timetableDay, startHour, endHour, false);
+    return '<section class="card timetable-card"><div class="calendar-top"><div class="heading-actions"><button class="icon-button" data-action="timetable-prev" aria-label="Previous week">‹</button><button class="button" data-action="timetable-today">This week</button><button class="icon-button" data-action="timetable-next" aria-label="Next week">›</button><strong class="calendar-title">' + escapeHtml(weekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' – ' + weekEnd.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) + '</strong></div>' +
+      '<div class="heading-actions timetable-settings"><label>From <select name="timetable-start">' + Array.from({ length: 24 }, function (_, index) { return '<option value="' + index + '"' + (index === startHour ? ' selected' : '') + '>' + escapeHtml(timeLabel(String(index).padStart(2, '0') + ':00')) + '</option>'; }).join('') + '</select></label>' +
+      '<label>To <select name="timetable-end">' + Array.from({ length: 24 }, function (_, index) { var value = index + 1; return '<option value="' + value + '"' + (value === endHour ? ' selected' : '') + '>' + escapeHtml(timeLabel(String(value % 24).padStart(2, '0') + ':00')) + '</option>'; }).join('') + '</select></label></div></div>' +
+      '<div class="timetable-view-toggle segmented"><button data-action="timetable-view" data-value="week" class="' + (timetableView === 'week' ? 'selected' : '') + '">Week</button><button data-action="timetable-view" data-value="day" class="' + (timetableView === 'day' ? 'selected' : '') + '">Day</button></div>' +
+      (timetableView === 'day' || mobileTimetable ? '<div class="timetable-day-picker">' + dayLabels.map(function (day) { return '<button class="' + (timetableDay === day ? 'selected' : '') + '" data-action="timetable-day" data-day="' + day + '">' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day] + '</button>'; }).join('') + '</div>' : '') +
+      (state.classSchedules.length ? '<div class="timetable-grid' + (timetableView === 'day' ? ' day-view' : mobileTimetable ? ' mobile-day-view' : '') + '" style="--timetable-hours:' + (endHour - startHour) + '">' +
+        '<div class="timetable-corner"></div>' + dayLabels.map(function (day) { var date = new Date(weekStart); date.setDate(date.getDate() + ((day + 6) % 7)); return '<button class="timetable-heading' + ((timetableView === 'day' || mobileTimetable) && day !== timetableDay ? ' hidden-day' : '') + '" data-action="timetable-day" data-day="' + day + '"><strong>' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day] + '</strong><span>' + date.getDate() + '</span></button>'; }).join('') +
+        '<div class="timetable-axis">' + times + '</div>' + (timetableView === 'day' ? mobileDay : dayColumns) + '</div>' :
+        emptyState('Your weekly timetable is empty.', 'Add recurring class times to see your week at a glance.', 'add-class', 'Add Class Schedule')) + '</section>';
+  }
+
+  function renderSchedule() {
+    var tabs = '<div class="page-tabs" role="tablist" aria-label="Schedule sections">' +
+      [['timetable', 'Weekly Timetable'], ['calendar', 'Calendar'], ['exams', 'Exams & Study Sessions']].map(function (tab) {
+        return '<button role="tab" aria-selected="' + (scheduleTab === tab[0]) + '" class="' + (scheduleTab === tab[0] ? 'selected' : '') + '" data-action="schedule-tab" data-value="' + tab[0] + '">' + tab[1] + '</button>';
+      }).join('') + '</div>';
+    var content = scheduleTab === 'timetable' ? renderWeeklyTimetable() :
+      scheduleTab === 'calendar' ? renderCalendar(true) + renderDatedSchedule(true) : renderPlanner();
+    return pageHeading('My Schedule', 'Plan recurring classes, dated events, exams, and study sessions.', '<button class="button primary" data-action="' + (scheduleTab === 'timetable' ? 'add-class' : scheduleTab === 'calendar' ? 'add-calendar-item' : 'add-exam') + '">' + (scheduleTab === 'timetable' ? '＋ Add Class Schedule' : scheduleTab === 'calendar' ? '＋ Add event' : '＋ Add exam') + '</button>') + tabs + content;
+  }
+
+  function renderSubjects(integrated) {
     var assessments = state.assessments.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
     var subjectCards = state.subjects.map(function (subject) {
       var records = assessments.filter(function (item) { return item.subjectId === subject.id; });
+      var upcomingExams = state.exams.filter(function (exam) { return exam.subjectId === subject.id && dayDifference(exam.date) >= 0; }).sort(function (a, b) { return a.date.localeCompare(b.date); }).slice(0, 3);
+      var relatedClasses = state.classSchedules.filter(function (item) { return item.subjectId === subject.id || item.subjectName.trim().toLowerCase() === subject.name.trim().toLowerCase(); });
       var avg = records.length ? records.reduce(function (sum, item) { return sum + item.score / item.maximum * 100; }, 0) / records.length : null;
       var weightedRecords = records.filter(function (item) { return item.weight !== '' && item.weight != null && Number(item.weight) > 0; });
       var weightTotal = weightedRecords.reduce(function (sum, item) { return sum + Number(item.weight); }, 0);
@@ -1195,10 +1335,11 @@
       var weightingNote = weighted == null ? (weightedRecords.length ? '<p class="small-note">Weighted estimate unavailable: recorded weights total ' + weightTotal + '%, not 100%.</p>' : '<p class="small-note">No configured weights; average is an unweighted percentage.</p>') : '<p class="small-note">Weighted estimate: ' + weighted.toFixed(1) + '% (weights total 100%).</p>';
       return '<article class="card"><div class="card-title-row"><h3>' + escapeHtml(subject.name) + '</h3><div class="table-actions"><button class="icon-button" data-action="edit-subject" data-id="' + escapeHtml(subject.id) + '" aria-label="Edit subject">✎</button><button class="icon-button" data-action="delete-subject" data-id="' + escapeHtml(subject.id) + '" aria-label="Delete subject">×</button></div></div>' +
         '<p class="small-note">' + escapeHtml([subject.code, subject.instructor, subject.period].filter(Boolean).join(' · ') || 'Subject details can be added in edit.') + '</p><div class="inline-stat"><strong>' + (avg == null ? '—' : avg.toFixed(1) + '%') + '</strong><span class="muted">' + gradeDisplay + '</span></div>' + weightingNote +
+        ((upcomingExams.length || relatedClasses.length) ? '<div class="related-academic"><strong>Upcoming &amp; schedule</strong>' + upcomingExams.map(function (exam) { return '<button class="text-button" data-action="edit-exam" data-id="' + escapeHtml(exam.id) + '">' + escapeHtml(exam.title + ' · ' + dateLabel(exam.date) + (exam.time ? ' · ' + timeLabel(exam.time) : '')) + '</button>'; }).join('') + relatedClasses.map(function (item) { return '<button class="text-button" data-action="edit-class" data-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.subjectName + ' · ' + (item.days || []).map(function (day) { return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][Number(day)]; }).join(', ') + ' · ' + timeLabel(item.startTime)) + '</button>'; }).join('') + '</div>' : '') +
         '<button class="text-button" data-action="add-assessment" data-subject="' + escapeHtml(subject.id) + '">＋ Record assessment</button>' +
         (records.length ? '<div class="task-list" style="margin-top:10px">' + records.slice(0, 4).map(assessmentRow).join('') + '</div>' : '') + '</article>';
     }).join('');
-    return pageHeading('Subjects & Grades', 'Keep subjects, assessments, and recorded scores together.', '<button class="button" data-action="add-assessment">＋ Record grade</button><button class="button primary" data-action="add-subject">＋ Add subject</button>') +
+    return (integrated ? '' : pageHeading('Subjects & Grades', 'Keep subjects, assessments, and recorded scores together.', '<button class="button" data-action="add-assessment">＋ Record grade</button><button class="button primary" data-action="add-subject">＋ Add subject</button>')) +
       (!state.subjects.length ? emptyState('No subjects yet.', 'Create your first subject to organize your academic progress.', 'add-subject', 'Add a subject') : '<div class="section-grid">' + subjectCards + '</div>') +
       '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Assessment records</h2><span class="muted">' + assessments.length + ' recorded</span></div>' +
       (assessments.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Assessment</th><th>Subject</th><th>Score</th><th>Percentage</th><th>Date</th><th></th></tr></thead><tbody>' + assessments.map(function (item) { return '<tr><td>' + escapeHtml(item.name) + '</td><td>' + escapeHtml(subjectName(item.subjectId) || '—') + '</td><td>' + escapeHtml(item.score) + ' / ' + escapeHtml(item.maximum) + '</td><td>' + (item.maximum ? (item.score / item.maximum * 100).toFixed(1) + '%' : '—') + '</td><td>' + escapeHtml(dateLabel(item.date)) + '</td><td><div class="table-actions"><button class="icon-button" data-action="edit-assessment" data-id="' + escapeHtml(item.id) + '" aria-label="Edit assessment">✎</button><button class="icon-button" data-action="delete-assessment" data-id="' + escapeHtml(item.id) + '" aria-label="Delete assessment">×</button></div></td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('No grades recorded yet.', 'Add an assessment to begin tracking scores.')) + '</section>';
@@ -1208,15 +1349,36 @@
     return '<div class="simple-row"><span class="row-info"><strong>' + escapeHtml(item.name) + '</strong><small>' + escapeHtml(dateLabel(item.date)) + ' · ' + escapeHtml(item.score) + '/' + escapeHtml(item.maximum) + '</small></span><span class="status-pill">' + (item.maximum ? (item.score / item.maximum * 100).toFixed(0) + '%' : '—') + '</span></div>';
   }
 
-  function renderPlanner() {
+  function renderPlanner(integrated) {
     var exams = state.exams.slice().sort(function (a, b) { return a.date.localeCompare(b.date); });
     var sessions = state.studySessions.slice().sort(function (a, b) { return (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')); });
-    return pageHeading('Exams & Study Planner', 'Prepare across the semester with manageable study sessions.', '<button class="button" data-action="add-study">＋ Plan study</button><button class="button primary" data-action="add-exam">＋ Add exam</button>') +
+    return (integrated ? '' : pageHeading('Exams & Study Planner', 'Prepare across the semester with manageable study sessions.', '<button class="button" data-action="add-study">＋ Plan study</button><button class="button primary" data-action="add-exam">＋ Add exam</button>')) +
       '<div class="section-grid"><section class="card"><div class="card-title-row"><h2>Upcoming exams</h2><span class="muted">' + exams.filter(function (exam) { return dayDifference(exam.date) >= 0; }).length + ' upcoming</span></div>' +
       (exams.length ? exams.map(function (exam) { var days = dayDifference(exam.date); return '<div class="simple-row"><span class="deadline-date"><strong>' + escapeHtml(parseDate(exam.date).getDate()) + '</strong>' + escapeHtml(parseDate(exam.date).toLocaleDateString(undefined, { month: 'short' })) + '</span><span class="row-info"><strong>' + escapeHtml(exam.title) + (exam.demo ? ' · Demo' : '') + '</strong><small>' + escapeHtml(subjectName(exam.subjectId) || 'No subject') + (exam.time ? ' · ' + escapeHtml(timeLabel(exam.time)) : '') + ' · ' + escapeHtml(days < 0 ? 'Past' : days === 0 ? 'Today' : 'In ' + days + ' days') + '</small></span><span class="status-pill">' + escapeHtml(exam.prepStatus) + '</span><span class="table-actions"><button class="icon-button" data-action="edit-exam" data-id="' + escapeHtml(exam.id) + '" aria-label="Edit exam">✎</button><button class="icon-button" data-action="delete-exam" data-id="' + escapeHtml(exam.id) + '" aria-label="Delete exam">×</button></span></div>'; }).join('') : emptyState('No exams scheduled yet.', 'Add your next quiz or examination.', 'add-exam', 'Add an exam')) + '</section>' +
       '<section class="card"><div class="card-title-row"><h2>Focus timer</h2><span class="muted">Pomodoro</span></div>' + timerWidget(true) + '<button class="text-button" data-action="open-settings">Adjust focus and break durations in Settings</button></section></div>' +
       '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Planned study sessions</h2><button class="button" data-action="add-study">＋ Plan session</button></div>' +
       (sessions.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Topic</th><th>Subject</th><th>Date &amp; time</th><th>Planned</th><th>Status</th><th></th></tr></thead><tbody>' + sessions.map(function (session) { return '<tr><td>' + escapeHtml(session.topic) + '<div class="small-note">' + escapeHtml(session.notes || '') + '</div></td><td>' + escapeHtml(subjectName(session.subjectId) || '—') + '</td><td>' + escapeHtml(dateLabel(session.date)) + (session.startTime ? ' · ' + escapeHtml(timeLabel(session.startTime)) : '') + '</td><td>' + escapeHtml(session.plannedMinutes || 0) + ' min' + (session.actualMinutes ? ' · ' + escapeHtml(session.actualMinutes) + ' actual' : '') + '</td><td><span class="status-pill ' + (session.status === 'Completed' ? 'status-completed' : 'status-upcoming') + '">' + escapeHtml(session.status) + '</span></td><td><div class="table-actions"><button class="icon-button" data-action="toggle-study" data-id="' + escapeHtml(session.id) + '" aria-label="Toggle study completion">' + (session.status === 'Completed' ? '↶' : '✓') + '</button><button class="icon-button" data-action="edit-study" data-id="' + escapeHtml(session.id) + '" aria-label="Edit session">✎</button><button class="icon-button" data-action="delete-study" data-id="' + escapeHtml(session.id) + '" aria-label="Delete session">×</button></div></td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('No study sessions planned.', 'Plan your first focused session across the days before an exam.', 'add-study', 'Plan a study session')) + '</section>';
+  }
+
+  function renderFlashcards() {
+    return '<section class="card"><div class="card-title-row"><div><h2>Study reviewers</h2><p class="small-note">Create your own question-and-answer flashcards.</p></div><button class="button primary" data-action="add-flashcard">＋ Add flashcard</button></div>' +
+      (state.flashcards.length ? '<div class="flashcard-list">' + state.flashcards.map(function (item) {
+        var revealed = revealedFlashcards.has(item.id);
+        return '<article class="flashcard"><div class="flashcard-question"><span class="eyebrow">' + escapeHtml(subjectName(item.subjectId) || 'Unassigned') + '</span><strong>' + escapeHtml(item.question) + '</strong>' +
+          (revealed ? '<p>' + escapeHtml(item.answer) + '</p>' : '') + '</div><div class="table-actions"><button class="button" data-action="flashcard-reveal" data-id="' + escapeHtml(item.id) + '">' + (revealed ? 'Hide answer' : 'Show answer') + '</button><button class="icon-button" data-action="edit-flashcard" data-id="' + escapeHtml(item.id) + '" aria-label="Edit flashcard">✎</button><button class="icon-button" data-action="delete-flashcard" data-id="' + escapeHtml(item.id) + '" aria-label="Delete flashcard">×</button></div></article>';
+      }).join('') + '</div>' : emptyState('No reviewers yet.', 'Add a flashcard to start creating your own study reviewer.', 'add-flashcard', 'Add flashcard')) + '</section>';
+  }
+
+  function renderAcademics() {
+    var tabs = [['subjects', 'Subjects & Grades'], ['planner', 'Exams & Study Planner'], ['reviewers', 'Reviewers']];
+    var content = academicsTab === 'subjects' ? renderSubjects(true) : academicsTab === 'planner' ? renderPlanner(true) : renderFlashcards();
+    var action = academicsTab === 'subjects' ? '<button class="button" data-action="add-assessment">＋ Record grade</button><button class="button primary" data-action="add-subject">＋ Add subject</button>' :
+      academicsTab === 'planner' ? '<button class="button" data-action="add-study">＋ Plan study</button><button class="button primary" data-action="add-exam">＋ Add exam</button>' :
+        '<button class="button primary" data-action="add-flashcard">＋ Add flashcard</button>';
+    return pageHeading('Academics', 'Manage subjects, grades, exams, study plans, and your own reviewers.', action) +
+      '<div class="page-tabs" role="tablist" aria-label="Academic sections">' + tabs.map(function (tab) {
+        return '<button role="tab" aria-selected="' + (academicsTab === tab[0]) + '" class="' + (academicsTab === tab[0] ? 'selected' : '') + '" data-action="academics-tab" data-value="' + tab[0] + '">' + tab[1] + '</button>';
+      }).join('') + '</div>' + content;
   }
 
   function timerWidget(compact) {
@@ -1235,13 +1397,13 @@
       '<button class="button" data-action="timer-reset">Reset</button><button class="button" data-action="timer-skip">Skip</button></div></div>';
   }
 
-  function renderHabits() {
+  function renderHabits(integrated) {
     var habits = todaysHabits();
     var today = todayKey();
     var start = parseDate(today);
     start.setDate(start.getDate() - start.getDay());
     var weekDays = Array.from({ length: 7 }, function (_, index) { var date = new Date(start); date.setDate(date.getDate() + index); return localDate(date); });
-    return pageHeading('Habits', 'Small routines add up. Keep building at your own pace.', '<button class="button primary" data-action="add-habit">＋ Add habit</button>') +
+    return (integrated ? '<div class="stack"><section class="card"><div class="card-title-row"><div><h2>Habit check-ins</h2><p class="small-note">Manage routines and recorded weekly progress.</p></div><button class="button primary" data-action="add-habit">＋ Add habit</button></div>' : pageHeading('Habits', 'Small routines add up. Keep building at your own pace.', '<button class="button primary" data-action="add-habit">＋ Add habit</button>')) +
       '<div class="notice info" style="margin-bottom:16px">Every new day is another chance to build a good habit.</div>' +
       '<section class="card"><div class="card-title-row"><h2>Today’s habits</h2><span class="muted">' + habits.filter(function (habit) { return habitDone(habit.id, today); }).length + ' of ' + habits.length + ' complete</span></div>' +
       (habits.length ? habits.map(function (habit) {
@@ -1250,7 +1412,7 @@
         return '<div class="simple-row"><label class="habit-check"><input type="checkbox" data-action="toggle-habit" data-id="' + escapeHtml(habit.id) + '" data-date="' + today + '"' + (habitDone(habit.id, today) ? ' checked' : '') + '><span class="row-info"><strong>' + escapeHtml(habit.name) + '</strong><small>' + escapeHtml(habit.description || habit.frequency + (habit.frequency === 'Weekly' ? ' · target ' + (habit.weeklyTarget || 3) + ' days/week' : '')) + '</small></span></label><span class="streak">↗ ' + streak + ' ' + (habit.frequency === 'Weekly' ? 'weeks' : 'day streak') + '</span><div class="table-actions"><button class="icon-button" data-action="edit-habit" data-id="' + escapeHtml(habit.id) + '" aria-label="Edit habit">✎</button><button class="icon-button" data-action="archive-habit" data-id="' + escapeHtml(habit.id) + '" aria-label="Archive habit">⌑</button></div></div>';
       }).join('') : emptyState('No habits yet.', 'Start small. Add a habit you want to build.', 'add-habit', 'Add a habit')) + '</section>' +
       '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>This week</h2><span class="muted">Saved completion history</span></div>' +
-      (habits.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Habit</th>' + weekDays.map(function (day) { return '<th style="text-align:center">' + escapeHtml(parseDate(day).toLocaleDateString(undefined, { weekday: 'short' })) + '<br>' + escapeHtml(parseDate(day).getDate()) + '</th>'; }).join('') + '<th>Progress</th></tr></thead><tbody>' + habits.map(function (habit) { var count = weekDays.filter(function (day) { return habitDone(habit.id, day); }).length; return '<tr><td>' + escapeHtml(habit.name) + '</td>' + weekDays.map(function (day) { return '<td style="text-align:center"><input type="checkbox" data-action="toggle-habit" data-id="' + escapeHtml(habit.id) + '" data-date="' + day + '" aria-label="' + escapeHtml(habit.name + ' on ' + day) + '"' + (habitDone(habit.id, day) ? ' checked' : '') + '></td>'; }).join('') + '<td>' + count + ' / 7</td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('Habit history will appear here.', 'Add a habit, then check it off on the days you complete it.')) + '</section>';
+      (habits.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Habit</th>' + weekDays.map(function (day) { return '<th style="text-align:center">' + escapeHtml(parseDate(day).toLocaleDateString(undefined, { weekday: 'short' })) + '<br>' + escapeHtml(parseDate(day).getDate()) + '</th>'; }).join('') + '<th>Progress</th></tr></thead><tbody>' + habits.map(function (habit) { var count = weekDays.filter(function (day) { return habitDone(habit.id, day); }).length; return '<tr><td>' + escapeHtml(habit.name) + '</td>' + weekDays.map(function (day) { return '<td style="text-align:center"><input type="checkbox" data-action="toggle-habit" data-id="' + escapeHtml(habit.id) + '" data-date="' + day + '" aria-label="' + escapeHtml(habit.name + ' on ' + day) + '"' + (habitDone(habit.id, day) ? ' checked' : '') + '></td>'; }).join('') + '<td>' + count + ' / 7</td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('Habit history will appear here.', 'Add a habit, then check it off on the days you complete it.')) + '</section>' + (integrated ? '</div>' : '');
   }
 
   function habitStreak(habit) {
@@ -1324,7 +1486,7 @@
       '<div class="section-grid"><section class="card"><div class="card-title-row"><h2>Task activity</h2><span class="muted">Completed once per task</span></div><div class="bar-list">' +
       progressBar('Completed', tasksDone.length, maxTasks) + progressBar('Remaining', remaining, maxTasks) + progressBar('Overdue', overdue, maxTasks) +
       '</div></section><section class="card"><div class="card-title-row"><h2>Habits</h2><span class="muted">Recorded check-ins</span></div><div class="inline-stat"><strong>' + habitRate + '%</strong><span class="muted">completion rate</span></div><div class="progress-track" style="width:100%;margin:14px 0"><span class="progress-fill" style="display:block;width:' + habitRate + '%"></span></div><p class="small-note">' + logs + ' check-ins recorded across ' + habitTotal + ' active habits.</p></section></div>' +
-      '<section class="section-grid" style="margin-top:16px"><article class="card"><div class="card-title-row"><h2>Focus sessions</h2></div><div class="inline-stat"><strong>' + state.timer.completedSessions.filter(function (session) { return session.phase === 'focus' && dateInConfiguredTimezone(new Date(session.completedAt)) >= from && dateInConfiguredTimezone(new Date(session.completedAt)) <= to; }).length + '</strong><span class="muted">completed in period</span></div><p class="small-note">Only completed focus sessions count. Planned study time is reported separately from those sessions.</p></article><article class="card"><div class="card-title-row"><h2>Academic assessments</h2></div>' + (subjectSummary ? '<div class="bar-list">' + subjectSummary + '</div><p class="small-note">Percentages use recorded scores; they are not official grades.</p>' : emptyState('No assessment data for this period.', 'Record assessment scores in Subjects & Grades.')) + '</article></section>';
+      '<section class="section-grid" style="margin-top:16px"><article class="card"><div class="card-title-row"><h2>Focus sessions</h2></div><div class="inline-stat"><strong>' + state.timer.completedSessions.filter(function (session) { return session.phase === 'focus' && dateInConfiguredTimezone(new Date(session.completedAt)) >= from && dateInConfiguredTimezone(new Date(session.completedAt)) <= to; }).length + '</strong><span class="muted">completed in period</span></div><p class="small-note">Only completed focus sessions count. Planned study time is reported separately from those sessions.</p></article><article class="card"><div class="card-title-row"><h2>Academic assessments</h2></div>' + (subjectSummary ? '<div class="bar-list">' + subjectSummary + '</div><p class="small-note">Percentages use recorded scores; they are not official grades.</p>' : emptyState('No assessment data for this period.', 'Record assessment scores in Academics.')) + '</article></section>' + renderHabits(true);
   }
 
   function progressBar(label, value, max) {
@@ -1421,13 +1583,10 @@
     dashboard: ['Dashboard', renderDashboard],
     tasks: ['My Tasks', renderTasks],
     search: ['Search', renderSearch],
-    calendar: ['Calendar', renderCalendar],
-    schedule: ['Daily Schedule', renderSchedule],
-    subjects: ['Subjects & Grades', renderSubjects],
-    planner: ['Exams & Study Planner', renderPlanner],
+    schedule: ['My Schedule', renderSchedule],
+    academics: ['Academics', renderAcademics],
     deadlines: ['Deadlines', renderDeadlines],
     notifications: ['Notifications', renderNotifications],
-    habits: ['Habits', renderHabits],
     progress: ['Progress', renderProgress],
     settings: ['Settings', renderSettings],
     about: ['About My PeOr', renderAbout]
@@ -1468,6 +1627,11 @@
   }
 
   function setPage(page) {
+    if (page === 'calendar') { scheduleTab = 'calendar'; page = 'schedule'; }
+    else if (page === 'schedule-timeline') { scheduleTab = 'calendar'; page = 'schedule'; }
+    else if (page === 'planner') { scheduleTab = 'exams'; page = 'schedule'; }
+    else if (page === 'subjects') { academicsTab = 'subjects'; page = 'academics'; }
+    else if (page === 'habits') page = 'progress';
     if (!pages[page]) return;
     currentPage = page;
     render();
@@ -1511,9 +1675,11 @@
     var id = form.dataset.id;
     var formData = new FormData(form);
     var data = Object.fromEntries(formData.entries());
+    if (form.querySelector('[name="days"]')) data.days = formData.getAll('days');
     if (form.querySelector('[name="reminderOffsets"]')) data.reminderOffsets = formData.getAll('reminderOffsets');
     if (!validateForm(form)) return;
     var record;
+    var classOverlap = false;
     if (type === 'task') {
       if (data.estimatedMinutes && Number(data.estimatedMinutes) < 1) return fieldProblem(form, 'estimatedMinutes', 'Duration must be at least 1 minute.');
       record = Object.assign({}, data, {
@@ -1535,6 +1701,24 @@
       if (data.endTime <= data.startTime) return formError(form, 'End time must be later than start time.');
       record = Object.assign({}, data, { id: id || makeId() });
       upsert('schedule', record);
+    } else if (type === 'classSchedule') {
+      if (!data.days.length) return formError(form, 'Choose at least one day for this recurring class.');
+      if (data.endTime <= data.startTime) return formError(form, 'End time must be later than start time.');
+      var linkedSubject = data.subjectId ? getRecord('subjects', data.subjectId) : null;
+      if (linkedSubject) {
+        data.subjectName = data.subjectName || linkedSubject.name;
+        data.subjectCode = data.subjectCode || linkedSubject.code || '';
+      }
+      record = Object.assign({}, data, { id: id || makeId() });
+      upsert('classSchedules', record);
+      classOverlap = state.classSchedules.some(function (other) {
+        return other.id !== record.id && record.days.some(function (day) {
+          return classForDay(other, day) && record.startTime < other.endTime && other.startTime < record.endTime;
+        });
+      });
+    } else if (type === 'flashcard') {
+      record = Object.assign({}, data, { id: id || makeId() });
+      upsert('flashcards', record);
     } else if (type === 'subject') {
       record = Object.assign({}, data, { id: id || makeId() });
       upsert('subjects', record);
@@ -1557,7 +1741,8 @@
     saveState();
     closeModal();
     render();
-    toast(id ? 'Changes saved.' : 'Added successfully.');
+    if (classOverlap) toast('Class schedule saved, but it overlaps another class on at least one selected day.', true);
+    else toast(id ? 'Changes saved.' : 'Added successfully.');
   }
 
   function fieldProblem(form, name, message) {
@@ -1590,10 +1775,12 @@
     if (!window.confirm('Delete this ' + label + '? This cannot be undone.')) return;
     state[collection] = state[collection].filter(function (item) { return item.id !== id; });
     if (collection === 'habits') state.habitLogs = state.habitLogs.filter(function (log) { return log.habitId !== id; });
+    if (collection === 'flashcards') revealedFlashcards.delete(id);
     if (collection === 'subjects') {
       state.assessments = state.assessments.filter(function (item) { return item.subjectId !== id; });
       state.tasks.forEach(function (task) { if (task.subjectId === id) task.subjectId = ''; });
       state.schedule.forEach(function (item) { if (item.subjectId === id) item.subjectId = ''; });
+      state.classSchedules.forEach(function (item) { if (item.subjectId === id) item.subjectId = ''; });
     }
     saveState();
     if (onDone) onDone();
@@ -1727,9 +1914,11 @@
 
   function hasUserData(value) {
     var defaults = freshState();
-    return ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications']
+    return ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications']
       .some(function (key) { return value[key] && value[key].length; }) ||
       (value.dismissedReminders && value.dismissedReminders.length) ||
+      value.timetablePreferences.startHour !== defaults.timetablePreferences.startHour ||
+      value.timetablePreferences.endHour !== defaults.timetablePreferences.endHour ||
       Object.keys(defaults.preferences).some(function (key) { return value.preferences[key] !== defaults.preferences[key]; }) ||
       Object.keys(defaults.timer).some(function (key) {
         if (key === 'completedSessions') return value.timer.completedSessions && value.timer.completedSessions.length;
@@ -1759,7 +1948,7 @@
       var parsed = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Backup must contain a JSON object.');
       if (parsed.schemaVersion && parsed.schemaVersion > DATABASE_VERSION) throw new Error('This backup was created by a newer My PeOr version. Update the website before importing it.');
-      var knownKeys = ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'preferences', 'timer', 'notifications'];
+      var knownKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'preferences', 'timer', 'notifications', 'timetablePreferences'];
       var source = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
       if (!source || !knownKeys.some(function (key) { return Object.prototype.hasOwnProperty.call(source, key); })) {
         throw new Error('This file does not contain a My PeOr backup.');
@@ -1879,10 +2068,12 @@
       case 'settings': case 'open-settings': setPage('settings'); break;
       case 'add-task': openForm('task'); break;
       case 'add-schedule': openForm('schedule'); break;
+      case 'add-class': openForm('classSchedule'); break;
       case 'add-subject': openForm('subject'); break;
+      case 'add-flashcard': openForm('flashcard'); break;
       case 'add-assessment':
         record = target.dataset.subject ? { subjectId: target.dataset.subject } : null;
-        if (!state.subjects.length) { toast('Add a subject before recording an assessment.', true); setPage('subjects'); return; }
+        if (!state.subjects.length) { toast('Add a subject before recording an assessment.', true); setPage('academics'); return; }
         openForm('assessment', record); break;
       case 'add-exam': openForm('exam'); break;
       case 'add-study': openForm('study'); break;
@@ -1894,18 +2085,27 @@
       case 'add-calendar-item': addCalendarItem(); break;
       case 'edit-task': record = getRecord('tasks', id); if (record) openForm('task', record); break;
       case 'edit-schedule': record = getRecord('schedule', id); if (record) openForm('schedule', record); break;
+      case 'edit-class': record = getRecord('classSchedules', id); if (record) openForm('classSchedule', record); break;
       case 'edit-subject': record = getRecord('subjects', id); if (record) openForm('subject', record); break;
       case 'edit-assessment': record = getRecord('assessments', id); if (record) openForm('assessment', record); break;
       case 'edit-exam': record = getRecord('exams', id); if (record) openForm('exam', record); break;
       case 'edit-study': record = getRecord('studySessions', id); if (record) openForm('study', record); break;
       case 'edit-habit': record = getRecord('habits', id); if (record) openForm('habit', record); break;
+      case 'edit-flashcard': record = getRecord('flashcards', id); if (record) openForm('flashcard', record); break;
       case 'delete-task': deleteRecord('tasks', id, 'task'); break;
       case 'delete-schedule': deleteRecord('schedule', id, 'schedule block'); break;
+      case 'delete-class': deleteRecord('classSchedules', id, 'class schedule'); break;
       case 'delete-subject': deleteRecord('subjects', id, 'subject'); break;
       case 'delete-assessment': deleteRecord('assessments', id, 'assessment'); break;
       case 'delete-exam': deleteRecord('exams', id, 'exam'); break;
       case 'delete-study': deleteRecord('studySessions', id, 'study session'); break;
       case 'delete-habit': deleteRecord('habits', id, 'habit'); break;
+      case 'delete-flashcard': deleteRecord('flashcards', id, 'flashcard'); break;
+      case 'flashcard-reveal':
+        if (revealedFlashcards.has(id)) revealedFlashcards.delete(id);
+        else revealedFlashcards.add(id);
+        render();
+        break;
       case 'archive-habit':
         record = getRecord('habits', id);
         if (record) { record.active = record.active === 'Archived' ? 'Active' : 'Archived'; saveState(); render(); toast(record.active === 'Archived' ? 'Habit archived.' : 'Habit restored.'); }
@@ -1919,6 +2119,13 @@
       case 'schedule-today': selectedDate = todayKey(); render(); break;
       case 'schedule-prev': selectedDateChange(-1); break;
       case 'schedule-next': selectedDateChange(1); break;
+      case 'schedule-tab': scheduleTab = target.dataset.value; render(); break;
+      case 'academics-tab': academicsTab = target.dataset.value; render(); break;
+      case 'timetable-view': timetableView = target.dataset.value; render(); break;
+      case 'timetable-day': timetableDay = Number(target.dataset.day); timetableView = 'day'; render(); break;
+      case 'timetable-prev': timetableWeekOffset -= 1; render(); break;
+      case 'timetable-next': timetableWeekOffset += 1; render(); break;
+      case 'timetable-today': timetableWeekOffset = 0; timetableDay = new Date().getDay(); render(); break;
       case 'progress-range': progressRange = target.dataset.value; render(); break;
       case 'apply-range': render(); break;
       case 'quote': state.quoteIndex += 1; saveState(); render(); break;
@@ -2048,6 +2255,18 @@
         var chosenDate = parseDate(selectedDate);
         calendarDate = new Date(chosenDate.getFullYear(), chosenDate.getMonth(), 1);
       }
+      render();
+    }
+    if (target.name === 'timetable-start' || target.name === 'timetable-end') {
+      var startHour = target.name === 'timetable-start' ? Number(target.value) : state.timetablePreferences.startHour;
+      var endHour = target.name === 'timetable-end' ? Number(target.value) : state.timetablePreferences.endHour;
+      if (endHour <= startHour) {
+        toast('The timetable end time must be later than its start time.', true);
+        render();
+        return;
+      }
+      state.timetablePreferences = { startHour: startHour, endHour: endHour };
+      saveState();
       render();
     }
   });

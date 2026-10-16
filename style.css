@@ -223,6 +223,48 @@ textarea { min-height: 84px; resize: vertical; }
 .calendar-event.exam { background: var(--amber-soft); color: var(--amber); }
 .calendar-event.schedule { background: var(--green-soft); color: var(--green); }
 .calendar-event.study { background: var(--surface-hover); color: var(--muted); }
+.page-tabs { display: flex; gap: 6px; margin: 0 0 16px; padding-bottom: 8px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.page-tabs button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.page-tabs button:hover { background: var(--surface-hover); color: var(--text); }
+.page-tabs button.selected { background: var(--accent-soft); color: var(--accent); }
+.timetable-settings { flex-wrap: wrap; }
+.timetable-settings label { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
+.timetable-settings select { min-height: 32px; padding: 4px 7px; }
+.timetable-view-toggle { width: fit-content; margin: 0 0 12px auto; }
+.timetable-day-picker { display: none; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 12px; }
+.timetable-day-picker button { min-height: 34px; border: 1px solid transparent; border-radius: 8px; background: var(--surface-soft); color: var(--muted); cursor: pointer; font-size: 10px; }
+.timetable-day-picker button.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.timetable-grid { display: grid; grid-template-columns: 58px repeat(7, minmax(0, 1fr)); grid-template-rows: auto auto; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+.timetable-corner, .timetable-heading { min-height: 42px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.timetable-heading { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 4px; color: var(--text); cursor: pointer; font-size: 10px; }
+.timetable-heading span { color: var(--muted); }
+.timetable-heading:hover { background: var(--accent-soft); }
+.timetable-axis { display: grid; grid-column: 1; grid-row: 2; grid-template-rows: repeat(var(--timetable-hours), 68px); }
+.timetable-hour-label { padding: 3px 5px 0 0; border-right: 1px solid var(--line); color: var(--muted); font-size: 9px; text-align: right; transform: translateY(-7px); }
+.timetable-day-column { min-width: 0; grid-row: 2; border-right: 1px solid var(--line); }
+.timetable-day-column:last-child { border-right: 0; }
+.timetable-day-body { position: relative; min-height: 68px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 67px, var(--line) 67px, var(--line) 68px); }
+.timetable-class { position: absolute; z-index: 1; display: flex; min-width: 0; flex-direction: column; overflow: hidden; padding: 5px; border-left: 3px solid var(--class-color); border-radius: 6px; background: color-mix(in srgb, var(--class-color) 13%, var(--surface)); color: var(--text); font-size: 9px; }
+.timetable-class.has-overlap { outline: 1px solid var(--amber); }
+.timetable-class strong, .timetable-class small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timetable-class small { color: var(--muted); font-size: 8px; }
+.class-overlap-warning { color: var(--amber); font-size: 8px; font-weight: 700; }
+.class-actions { display: flex; gap: 2px; margin-top: auto; }
+.class-actions button { width: 22px; height: 20px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--text); cursor: pointer; }
+.weekday-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.weekday-options label { display: flex; min-height: 34px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: var(--text); font-size: 10px; }
+.weekday-options input { accent-color: var(--accent); }
+.flashcard-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 12px; }
+.flashcard { display: grid; min-width: 0; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
+.flashcard-question { display: grid; gap: 7px; overflow-wrap: anywhere; }
+.flashcard-question strong { font-size: 12px; }
+.flashcard-question p { margin: 0; color: var(--muted); font-size: 11px; white-space: pre-wrap; }
+.flashcard .table-actions { flex-wrap: wrap; }
+.flashcard .table-actions .button { min-height: 32px; }
+.related-academic { display: grid; gap: 5px; margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.related-academic > strong { color: var(--muted); font-size: 10px; }
+.related-academic .text-button { overflow-wrap: anywhere; font-size: 10px; text-align: left; }
+.hidden-day { display: none !important; }
 .timeline { position: relative; display: grid; gap: 0; }
 .timeline-row { display: grid; grid-template-columns: 85px 1fr; min-height: 65px; }
 .timeline-time { padding: 12px 12px 0 0; color: var(--muted); font-size: 10px; text-align: right; }
@@ -337,6 +379,16 @@ textarea { min-height: 84px; resize: vertical; }
   .mobile-bottom-nav button span { font-size: 17px; line-height: 1.2; }
   .mobile-bottom-nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timetable-day-picker { display: grid; }
+  .timetable-grid, .timetable-grid.day-view, .timetable-grid.mobile-day-view { grid-template-columns: 48px minmax(0, 1fr); }
+  .timetable-grid.day-view .timetable-heading.hidden-day, .timetable-grid.mobile-day-view .timetable-heading.hidden-day { display: none; }
+  .timetable-grid.day-view .timetable-day-column, .timetable-grid.mobile-day-view .timetable-day-column { grid-column: 2; }
+  .timetable-grid.day-view .timetable-day-column.hidden-day, .timetable-grid.mobile-day-view .timetable-day-column.hidden-day { display: none; }
+  .timetable-settings { justify-content: flex-start; }
+  .timetable-settings select { max-width: 105px; }
+  .timetable-class { padding: 4px; font-size: 10px; }
+  .timetable-class small { font-size: 9px; }
+  .timetable-class.has-overlap { z-index: 2; }
 }
 @media (max-width: 520px) {
   .topbar { height: 60px; }
