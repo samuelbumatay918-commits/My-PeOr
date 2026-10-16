@@ -26,6 +26,7 @@
         <button data-page="tasks" class="nav-item"><span class="nav-icon">☷</span>My Tasks</button>
         <button data-page="schedule" class="nav-item"><span class="nav-icon">◷</span>My Schedule</button>
         <button data-page="academics" class="nav-item"><span class="nav-icon">▤</span>Academics</button>
+        <button data-page="lessons" class="nav-item"><span class="nav-icon">▧</span>Lesson Organizer</button>
         <button data-page="deadlines" class="nav-item"><span class="nav-icon">⌛</span>Deadlines</button>
         <button data-page="notifications" class="nav-item"><span class="nav-icon">♧</span>Notifications<span class="nav-count" id="sidebar-notification-count" hidden></span></button>
         <button data-page="progress" class="nav-item"><span class="nav-icon">↗</span>Progress</button>
@@ -67,6 +68,7 @@
   </nav>
 
   <input id="import-backup-file" type="file" accept="application/json,.json" hidden>
+  <input id="lesson-file-input" type="file" accept=".pdf,.ppt,.pptx,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.bmp,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png,image/gif,image/webp,image/bmp" multiple hidden>
   <div class="modal-backdrop" id="modal" hidden>
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-heading"><div><p class="eyebrow" id="modal-eyebrow">Organizer</p><h2 id="modal-title">Add item</h2></div><button class="icon-button" data-action="close-modal" aria-label="Close dialog">×</button></div>

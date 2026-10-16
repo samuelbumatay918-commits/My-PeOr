@@ -264,6 +264,46 @@ textarea { min-height: 84px; resize: vertical; }
 .related-academic { display: grid; gap: 5px; margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--line); }
 .related-academic > strong { color: var(--muted); font-size: 10px; }
 .related-academic .text-button { overflow-wrap: anywhere; font-size: 10px; text-align: left; }
+.lesson-academics-link { margin-bottom: 16px; }
+.lesson-academics-link .text-button { display: inline; min-height: auto; padding: 0 3px; color: var(--accent); font-weight: 650; }
+.lesson-storage-notice { margin-bottom: 16px; }
+.lesson-folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 245px), 1fr)); gap: 15px; }
+.lesson-folder-card { display: flex; min-width: 0; flex-direction: column; }
+.lesson-folder-top { display: flex; align-items: flex-start; justify-content: space-between; }
+.lesson-folder-icon { display: grid; width: 43px; height: 43px; place-items: center; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--folder-color) 13%, var(--surface)); color: var(--folder-color); cursor: pointer; font-size: 20px; }
+.lesson-folder-name { justify-content: flex-start; margin-top: 12px; color: var(--text); font-size: 15px; font-weight: 650; text-align: left; }
+.lesson-folder-card > .small-note { flex: 1; margin: 7px 0 15px; overflow-wrap: anywhere; }
+.lesson-folder-counts { display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: 10px; }
+.lesson-folder-counts span { padding: 4px 8px; border-radius: 20px; background: var(--surface-soft); }
+.lesson-toolbar input[type="search"] { flex: 1 1 220px; }
+.lesson-toolbar select { flex: 0 1 155px; }
+.lesson-list { display: grid; gap: 12px; }
+.lesson-card { padding: 17px; }
+.lesson-card-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.lesson-number { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; }
+.lesson-card-title { min-width: 0; flex: 1; }
+.lesson-card-title h3 { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.lesson-card-title .small-note { margin: 3px 0 0; }
+.lesson-notes { margin-top: 13px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
+.lesson-notes p { margin: 0 0 7px; white-space: pre-wrap; }
+.lesson-notes p:last-child { margin-bottom: 0; }
+.lesson-notes ul { margin: 4px 0; padding-left: 21px; }
+.lesson-files { display: grid; gap: 1px; margin-top: 12px; }
+.lesson-file-row { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lesson-file-row:last-child { border-bottom: 0; }
+.lesson-file-icon { display: grid; width: 37px; height: 37px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 8px; font-weight: 700; }
+.lesson-file-info { display: grid; min-width: 0; flex: 1; }
+.lesson-file-info strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-file-info small { color: var(--muted); font-size: 9px; }
+.lesson-file-row .table-actions { flex-wrap: wrap; }
+.lesson-file-row .table-actions .button { min-height: 31px; padding: 0 9px; font-size: 10px; }
+.lesson-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 12px; }
+.lesson-card-actions .button { min-height: 32px; padding: 0 9px; font-size: 10px; }
+.lesson-subject-files { margin-top: 16px; }
+.lesson-storage-footnote { margin-top: 15px; }
+.lesson-note-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 7px; }
+.lesson-note-tools .button { min-height: 30px; padding: 0 9px; }
+.lesson-note-tools .form-hint { flex: 1 1 100%; }
 .hidden-day { display: none !important; }
 .timeline { position: relative; display: grid; gap: 0; }
 .timeline-row { display: grid; grid-template-columns: 85px 1fr; min-height: 65px; }
@@ -389,6 +429,11 @@ textarea { min-height: 84px; resize: vertical; }
   .timetable-class { padding: 4px; font-size: 10px; }
   .timetable-class small { font-size: 9px; }
   .timetable-class.has-overlap { z-index: 2; }
+  .lesson-card-heading { align-items: flex-start; flex-wrap: wrap; }
+  .lesson-card-heading .status-pill { margin-left: 46px; }
+  .lesson-file-row { align-items: flex-start; flex-wrap: wrap; }
+  .lesson-file-row .table-actions { width: 100%; margin-left: 47px; }
+  .lesson-card-actions { gap: 4px; }
 }
 @media (max-width: 520px) {
   .topbar { height: 60px; }

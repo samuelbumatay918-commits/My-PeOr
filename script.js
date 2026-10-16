@@ -24,7 +24,7 @@
   };
   var freshState = function () {
     return {
-      tasks: [], schedule: [], classSchedules: [], subjects: [], assessments: [], exams: [], studySessions: [], flashcards: [], habits: [], habitLogs: [],
+      tasks: [], schedule: [], classSchedules: [], subjects: [], assessments: [], exams: [], studySessions: [], flashcards: [], lessons: [], lessonAttachments: [], habits: [], habitLogs: [],
       timetablePreferences: { startHour: 7, endHour: 21 },
       preferences: { name: '', theme: 'system', timezone: 'Asia/Manila', dateFormat: 'medium', timeFormat: '12h', focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, notifications: false, sidebarCollapsed: false },
       timer: { phase: 'focus', status: 'idle', endAt: null, remainingMs: 25 * 60000, focusCount: 0, completedSessions: [] },
@@ -55,6 +55,10 @@
   var timetableWeekOffset = 0;
   var timetableDay = new Date().getDay();
   var revealedFlashcards = new Set();
+  var lessonSubjectId = '';
+  var lessonSearch = '';
+  var lessonStatusFilter = 'all';
+  var lessonSort = 'order';
   var selectedDate = todayKey();
   var progressRange = 'week';
   var customRange = { start: todayKey(), end: todayKey() };
@@ -85,7 +89,7 @@
       if (source.timer && source.timer.completedSessions !== undefined) throw new Error('Backup timer sessions must be a list.');
       base.timer.completedSessions = [];
     }
-    var arrayKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications', 'dismissedReminders'];
+    var arrayKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'lessons', 'lessonAttachments', 'habits', 'habitLogs', 'notifications', 'dismissedReminders'];
     arrayKeys.forEach(function (key) {
       if (source[key] !== undefined && !Array.isArray(source[key])) throw new Error('Backup field "' + key + '" must be a list.');
       if (!Array.isArray(base[key])) base[key] = [];
@@ -102,7 +106,7 @@
     base.timetablePreferences.startHour = Math.max(0, Math.min(23, Number(base.timetablePreferences.startHour) || 0));
     base.timetablePreferences.endHour = Math.max(base.timetablePreferences.startHour + 1, Math.min(24, Number(base.timetablePreferences.endHour) || 24));
     var ids = new Set();
-    ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications'].forEach(function (key) {
+    ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'lessons', 'lessonAttachments', 'habits', 'habitLogs', 'notifications'].forEach(function (key) {
       base[key].forEach(function (item) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Backup field "' + key + '" contains an invalid item.');
         if (!item.id || ids.has(item.id)) {
@@ -111,6 +115,20 @@
         }
         ids.add(item.id);
       });
+    });
+    base.lessonAttachments.forEach(function (item) {
+      if (!(item.data instanceof Blob)) throw new Error('Lesson attachment data is missing or invalid.');
+      if (!item.name || !item.subjectId || !Number.isFinite(Number(item.size))) throw new Error('A lesson attachment is missing required metadata.');
+      if (item.size !== item.data.size || item.size > 15 * 1024 * 1024) throw new Error('A lesson attachment has an invalid size.');
+      if (!base.subjects.some(function (subject) { return subject.id === item.subjectId; })) throw new Error('A lesson attachment references a subject that is not in this backup.');
+      if (item.lessonId && !base.lessons.some(function (lesson) { return lesson.id === item.lessonId && lesson.subjectId === item.subjectId; })) throw new Error('A lesson attachment references a lesson that is not in this backup.');
+    });
+    if (base.lessonAttachments.reduce(function (sum, item) { return sum + Number(item.size); }, 0) > 50 * 1024 * 1024) {
+      throw new Error('Lesson attachments in this backup exceed the 50 MB local limit.');
+    }
+    base.lessons.forEach(function (item) {
+      if (!item.subjectId || !item.title) throw new Error('A lesson is missing its subject or title.');
+      if (!base.subjects.some(function (subject) { return subject.id === item.subjectId; })) throw new Error('A lesson references a subject that is not in this backup.');
     });
     base.timer.completedSessions.forEach(function (session) {
       if (!session || typeof session !== 'object' || Array.isArray(session)) throw new Error('Backup contains an invalid completed study session.');
@@ -264,7 +282,7 @@
     var revision = ++saveRevision;
     var snapshot;
     try {
-      snapshot = JSON.parse(JSON.stringify(state));
+      snapshot = cloneState(state);
     } catch (error) {
       setStorageStatus('error', 'The current data could not be prepared for saving.');
       console.error('Unable to serialize My PeOr browser data.', error);
@@ -275,13 +293,30 @@
       var database = await openDatabase();
       await writeState(database, snapshot);
       if (revision === saveRevision) setStorageStatus('saved');
+    return true;
     }).catch(function (error) {
       if (revision === saveRevision) {
-        setStorageStatus('error', error && error.message ? error.message : 'Browser storage rejected the save.');
+        var message = error && error.name === 'QuotaExceededError'
+          ? 'Browser storage is full. Export a backup or remove some large attachments, then try again.'
+          : error && error.message ? error.message : 'Browser storage rejected the save.';
+        setStorageStatus('error', message);
         console.error('Unable to save My PeOr IndexedDB data.', error);
-        toast('Unable to save locally. Export your data if it is still visible, then check browser storage permissions.', true);
+        toast('Unable to save locally. ' + message, true);
       }
+      return false;
     });
+    return saveQueue;
+  }
+
+  function cloneState(value) {
+    if (value instanceof Blob) return value.slice(0, value.size, value.type);
+    if (Array.isArray(value)) return value.map(cloneState);
+    if (value && typeof value === 'object') {
+      var copy = {};
+      Object.keys(value).forEach(function (key) { copy[key] = cloneState(value[key]); });
+      return copy;
+    }
+    return value;
   }
 
   function escapeHtml(value) {
@@ -649,9 +684,10 @@
 
   function formFrame(type, record, fields, submitLabel) {
     var values = record || {};
-    var body = '<form data-form="' + type + '" data-id="' + escapeHtml(values.id || '') + '" novalidate><div class="form-grid">' +
+    var body = '<form data-form="' + type + '" data-id="' + escapeHtml(values.id || '') + '"' + (values.subjectId ? ' data-subject-id="' + escapeHtml(values.subjectId) + '"' : '') + ' novalidate><div class="form-grid">' +
       fields.map(function (item) {
         return item.type === 'reminders' ? reminderChoices(values.reminderOffsets) :
+          item.type === 'lessonNotes' ? '<div class="form-field full"><label for="field-notes">Lesson notes</label><div class="lesson-note-tools"><button class="button" type="button" data-action="lesson-note-format" data-format="bold"><strong>B</strong></button><button class="button" type="button" data-action="lesson-note-format" data-format="italic"><em>I</em></button><button class="button" type="button" data-action="lesson-note-format" data-format="list">• List</button><span class="form-hint">Select text to format. Notes support bold, italic, and bullet lists.</span></div><textarea id="field-notes" name="notes" rows="8">' + escapeHtml(values.notes || '') + '</textarea><small class="field-error"></small></div>' :
           field(item.label, item.name, item.type, values[item.name] != null ? values[item.name] : item.value, item);
       }).join('') +
       '</div><div class="form-actions"><button class="button" type="button" data-action="close-modal">Cancel</button><button class="button primary" type="submit">' + (submitLabel || 'Save') + '</button></div></form>';
@@ -717,10 +753,22 @@
       fields = [
         { label: 'Subject name', name: 'name', type: 'text', required: true },
         { label: 'Subject code', name: 'code', type: 'text' },
+        { label: 'Folder icon', name: 'icon', type: 'text', placeholder: '▧', hint: 'Optional. Use a short symbol or emoji.' },
+        { label: 'Folder color', name: 'color', type: 'color', value: '#5368d8', hint: 'Optional' },
         { label: 'Instructor', name: 'instructor', type: 'text' },
         { label: 'Semester / period', name: 'period', type: 'text' },
         { label: 'Target grade (%)', name: 'target', type: 'number', min: 0, max: 100, step: 'any' },
         { label: 'Description', name: 'description', type: 'textarea', full: true }
+      ];
+    } else if (type === 'lesson') {
+      title = id ? 'Edit lesson' : 'Add lesson';
+      fields = [
+        { label: 'Lesson title', name: 'title', type: 'text', required: true, full: true },
+        { label: 'Lesson number', name: 'lessonNumber', type: 'number', min: 1, step: 1, hint: 'Optional' },
+        { label: 'Topic', name: 'topic', type: 'text', hint: 'Optional' },
+        { label: 'Lesson date', name: 'date', type: 'date', hint: 'Optional' },
+        { label: 'Review status', name: 'reviewStatus', type: 'select', choices: ['Not Reviewed', 'Reviewed'], value: 'Not Reviewed' },
+        { label: 'Notes', name: 'notes', type: 'lessonNotes', full: true }
       ];
     } else if (type === 'assessment') {
       title = id ? 'Edit assessment' : 'Record grade';
@@ -773,7 +821,8 @@
       ];
     }
     if (!fields) return;
-    openModal(title, formFrame(type, record, fields), 'input:not([type="hidden"]), select');
+    openModal(title, formFrame(type, record, fields), 'input:not([type="hidden"]), select, textarea');
+    if (type === 'lesson') modal.querySelector('[name="title"]').focus();
   }
 
   function taskMarkup(task, withActions) {
@@ -1339,7 +1388,7 @@
         '<button class="text-button" data-action="add-assessment" data-subject="' + escapeHtml(subject.id) + '">＋ Record assessment</button>' +
         (records.length ? '<div class="task-list" style="margin-top:10px">' + records.slice(0, 4).map(assessmentRow).join('') + '</div>' : '') + '</article>';
     }).join('');
-    return (integrated ? '' : pageHeading('Subjects & Grades', 'Keep subjects, assessments, and recorded scores together.', '<button class="button" data-action="add-assessment">＋ Record grade</button><button class="button primary" data-action="add-subject">＋ Add subject</button>')) +
+    return (integrated ? '<div class="notice info lesson-academics-link">Organize course notes and learning materials by subject in <button class="text-button" data-page-link="lessons">Lesson Organizer →</button></div>' : pageHeading('Subjects & Grades', 'Keep subjects, assessments, and recorded scores together.', '<button class="button" data-action="add-assessment">＋ Record grade</button><button class="button primary" data-action="add-subject">＋ Add subject</button>')) +
       (!state.subjects.length ? emptyState('No subjects yet.', 'Create your first subject to organize your academic progress.', 'add-subject', 'Add a subject') : '<div class="section-grid">' + subjectCards + '</div>') +
       '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Assessment records</h2><span class="muted">' + assessments.length + ' recorded</span></div>' +
       (assessments.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Assessment</th><th>Subject</th><th>Score</th><th>Percentage</th><th>Date</th><th></th></tr></thead><tbody>' + assessments.map(function (item) { return '<tr><td>' + escapeHtml(item.name) + '</td><td>' + escapeHtml(subjectName(item.subjectId) || '—') + '</td><td>' + escapeHtml(item.score) + ' / ' + escapeHtml(item.maximum) + '</td><td>' + (item.maximum ? (item.score / item.maximum * 100).toFixed(1) + '%' : '—') + '</td><td>' + escapeHtml(dateLabel(item.date)) + '</td><td><div class="table-actions"><button class="icon-button" data-action="edit-assessment" data-id="' + escapeHtml(item.id) + '" aria-label="Edit assessment">✎</button><button class="icon-button" data-action="delete-assessment" data-id="' + escapeHtml(item.id) + '" aria-label="Delete assessment">×</button></div></td></tr>'; }).join('') + '</tbody></table></div>' : emptyState('No grades recorded yet.', 'Add an assessment to begin tracking scores.')) + '</section>';
@@ -1379,6 +1428,102 @@
       '<div class="page-tabs" role="tablist" aria-label="Academic sections">' + tabs.map(function (tab) {
         return '<button role="tab" aria-selected="' + (academicsTab === tab[0]) + '" class="' + (academicsTab === tab[0] ? 'selected' : '') + '" data-action="academics-tab" data-value="' + tab[0] + '">' + tab[1] + '</button>';
       }).join('') + '</div>' + content;
+  }
+
+  function lessonFolderCounts(subjectId) {
+    return {
+      lessons: state.lessons.filter(function (item) { return item.subjectId === subjectId; }).length,
+      files: state.lessonAttachments.filter(function (item) { return item.subjectId === subjectId; }).length
+    };
+  }
+
+  function formatFileSize(size) {
+    if (size < 1024) return size + ' B';
+    if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+    return (size / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function attachmentType(file) {
+    var extension = String(file.name || '').split('.').pop().toUpperCase();
+    return extension && extension !== file.name.toUpperCase() ? extension : (file.type || 'File');
+  }
+
+  function attachmentIconLabel(file) {
+    return file.type === 'application/pdf' ? 'PDF' : /^image\//i.test(file.type || '') ? 'IMG' : attachmentType(file).slice(0, 3);
+  }
+
+  function lessonNotesMarkup(notes) {
+    var lines = escapeHtml(notes || '').split(/\r?\n/);
+    var output = [];
+    var list = [];
+    function inline(text) {
+      return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+    }
+    function flushList() {
+      if (!list.length) return;
+      output.push('<ul>' + list.map(function (line) { return '<li>' + inline(line) + '</li>'; }).join('') + '</ul>');
+      list = [];
+    }
+    lines.forEach(function (line) {
+      var bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+      if (bullet) list.push(bullet[1]);
+      else {
+        flushList();
+        if (line) output.push('<p>' + inline(line) + '</p>');
+        else output.push('<br>');
+      }
+    });
+    flushList();
+    return output.join('');
+  }
+
+  function lessonAttachmentMarkup(file, showOwner) {
+    var lesson = file.lessonId ? getRecord('lessons', file.lessonId) : null;
+    var previewable = file.type === 'application/pdf' || /^image\/(jpeg|png|gif|webp|bmp)$/i.test(file.type || '');
+    return '<div class="lesson-file-row"><span class="lesson-file-icon" aria-hidden="true">' + escapeHtml(attachmentIconLabel(file)) + '</span><span class="lesson-file-info"><strong title="' + escapeHtml(file.name) + '">' + escapeHtml(file.name) + '</strong><small>' + escapeHtml(attachmentType(file)) + ' · ' + escapeHtml(formatFileSize(Number(file.size) || 0)) + (showOwner ? ' · ' + escapeHtml(lesson ? lesson.title : 'Subject files') : '') + '</small></span><span class="table-actions"><button class="button" data-action="' + (previewable ? 'attachment-open' : 'attachment-download') + '" data-id="' + escapeHtml(file.id) + '">' + (previewable ? 'Open' : 'Download') + '</button><button class="icon-button" data-action="attachment-download" data-id="' + escapeHtml(file.id) + '" aria-label="Download ' + escapeHtml(file.name) + '">↓</button><button class="icon-button" data-action="attachment-replace" data-id="' + escapeHtml(file.id) + '" aria-label="Replace ' + escapeHtml(file.name) + '">↻</button><button class="icon-button" data-action="attachment-delete" data-id="' + escapeHtml(file.id) + '" aria-label="Delete ' + escapeHtml(file.name) + '">×</button></span></div>';
+  }
+
+  function renderLessonOrganizer() {
+    var subjects = state.subjects.slice().sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var subject = lessonSubjectId ? getRecord('subjects', lessonSubjectId) : null;
+    if (lessonSubjectId && !subject) lessonSubjectId = '';
+    if (!subject) {
+      var cards = subjects.map(function (item) {
+        var counts = lessonFolderCounts(item.id);
+        var color = /^#[0-9a-f]{6}$/i.test(item.color || '') ? item.color : '#5368d8';
+        return '<article class="card lesson-folder-card"><div class="lesson-folder-top"><button class="lesson-folder-icon" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Open ' + escapeHtml(item.name) + '" style="--folder-color:' + color + '">' + escapeHtml(item.icon || '▧') + '</button><div class="table-actions"><button class="icon-button" data-action="edit-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Edit ' + escapeHtml(item.name) + '">✎</button><button class="icon-button" data-action="delete-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Delete ' + escapeHtml(item.name) + '">×</button></div></div><button class="lesson-folder-name text-button" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.name) + '</button><p class="small-note">' + escapeHtml([item.code, item.description].filter(Boolean).join(' · ') || 'Open this folder to add lessons and files.') + '</p><div class="lesson-folder-counts"><span>' + counts.lessons + ' ' + (counts.lessons === 1 ? 'lesson' : 'lessons') + '</span><span>' + counts.files + ' ' + (counts.files === 1 ? 'file' : 'files') + '</span></div></article>';
+      }).join('');
+      return pageHeading('Lesson Organizer', 'Keep your lesson notes and learning materials together by subject.', '<button class="button primary" data-action="add-subject">＋ Add Subject</button>') +
+        '<div class="notice info lesson-storage-notice">Lessons and files are saved locally in this browser (15 MB per file, 50 MB total). Clearing browser site data may permanently remove them. Export a backup in Settings to keep a copy.</div>' +
+        (subjects.length ? '<div class="lesson-folder-grid">' + cards + '</div>' : emptyState('No subject folders yet.', 'Create a subject folder to start organizing your lessons.', 'add-subject', 'Add Subject'));
+    }
+
+    var lessons = state.lessons.filter(function (item) {
+      if (item.subjectId !== subject.id) return false;
+      if (lessonStatusFilter === 'reviewed' && item.reviewStatus !== 'Reviewed') return false;
+      if (lessonStatusFilter === 'unreviewed' && item.reviewStatus === 'Reviewed') return false;
+      var text = [item.title, item.topic, item.notes, item.lessonNumber].join(' ').toLowerCase();
+      return !lessonSearch || text.indexOf(lessonSearch.toLowerCase()) >= 0;
+    });
+    lessons.sort(function (a, b) {
+      if (lessonSort === 'title') return a.title.localeCompare(b.title);
+      if (lessonSort === 'date') return (a.date || '9999').localeCompare(b.date || '9999');
+      return (Number(a.order) || Number(a.lessonNumber) || 0) - (Number(b.order) || Number(b.lessonNumber) || 0);
+    });
+    var lessonCards = lessons.map(function (item, index) {
+      var fileRows = state.lessonAttachments.filter(function (file) { return file.lessonId === item.id; }).map(function (file) { return lessonAttachmentMarkup(file, false); }).join('');
+      var reorderDisabled = lessonSort !== 'order' || lessonStatusFilter !== 'all' || Boolean(lessonSearch);
+      return '<article class="card lesson-card"><div class="lesson-card-heading"><span class="lesson-number">' + escapeHtml(item.lessonNumber || index + 1) + '</span><div class="lesson-card-title"><h3>' + escapeHtml(item.title) + '</h3><p class="small-note">' + escapeHtml([item.topic, item.date ? dateLabel(item.date) : ''].filter(Boolean).join(' · ') || 'Lesson details') + '</p></div><span class="status-pill ' + (item.reviewStatus === 'Reviewed' ? 'status-completed' : 'status-upcoming') + '">' + escapeHtml(item.reviewStatus || 'Not Reviewed') + '</span></div>' +
+        (item.notes ? '<div class="lesson-notes">' + lessonNotesMarkup(item.notes) + '</div>' : '') +
+        (fileRows ? '<div class="lesson-files">' + fileRows + '</div>' : '') +
+        '<div class="lesson-card-actions"><button class="button" data-action="lesson-upload-files" data-subject="' + escapeHtml(subject.id) + '" data-lesson="' + escapeHtml(item.id) + '">＋ Upload Files</button><button class="button" data-action="lesson-toggle-reviewed" data-id="' + escapeHtml(item.id) + '">' + (item.reviewStatus === 'Reviewed' ? 'Mark not reviewed' : 'Mark reviewed') + '</button><button class="icon-button" data-action="lesson-move" data-id="' + escapeHtml(item.id) + '" data-direction="up" aria-label="Move lesson up" ' + (reorderDisabled || index === 0 ? 'disabled' : '') + '>↑</button><button class="icon-button" data-action="lesson-move" data-id="' + escapeHtml(item.id) + '" data-direction="down" aria-label="Move lesson down" ' + (reorderDisabled || index === lessons.length - 1 ? 'disabled' : '') + '>↓</button><button class="icon-button" data-action="lesson-edit" data-id="' + escapeHtml(item.id) + '" aria-label="Edit lesson">✎</button><button class="icon-button" data-action="lesson-delete" data-id="' + escapeHtml(item.id) + '" aria-label="Delete lesson">×</button></div></article>';
+    }).join('');
+    var subjectFiles = state.lessonAttachments.filter(function (file) { return file.subjectId === subject.id && !file.lessonId; });
+    return pageHeading(subject.name, [subject.code, subject.description].filter(Boolean).join(' · ') || 'Lessons, notes, and materials for this subject.', '<button class="button" data-action="lesson-back">‹ All subjects</button><button class="button" data-action="lesson-upload-files" data-subject="' + escapeHtml(subject.id) + '">＋ Upload Files</button><button class="button primary" data-action="lesson-add" data-subject="' + escapeHtml(subject.id) + '">＋ Add Lesson</button>') +
+      '<div class="toolbar lesson-toolbar"><input type="search" name="lesson-search" placeholder="Search lessons and notes…" value="' + escapeHtml(lessonSearch) + '" aria-label="Search lessons"><select name="lesson-status" aria-label="Filter by review status"><option value="all"' + (lessonStatusFilter === 'all' ? ' selected' : '') + '>All lessons</option><option value="reviewed"' + (lessonStatusFilter === 'reviewed' ? ' selected' : '') + '>Reviewed</option><option value="unreviewed"' + (lessonStatusFilter === 'unreviewed' ? ' selected' : '') + '>Not reviewed</option></select><select name="lesson-sort" aria-label="Sort lessons"><option value="order"' + (lessonSort === 'order' ? ' selected' : '') + '>Lesson order</option><option value="title"' + (lessonSort === 'title' ? ' selected' : '') + '>Title</option><option value="date"' + (lessonSort === 'date' ? ' selected' : '') + '>Date</option></select><button class="button" data-action="lesson-clear-search">Clear search</button></div>' +
+      (lessons.length ? '<div class="lesson-list">' + lessonCards + '</div>' : emptyState(lessonSearch || lessonStatusFilter !== 'all' ? 'No matching lessons.' : 'No lessons in this subject yet.', lessonSearch || lessonStatusFilter !== 'all' ? 'Try changing your search or review filter.' : 'Add a lesson or upload subject materials to get started.', 'lesson-add', 'Add Lesson')) +
+      (subjectFiles.length ? '<section class="card lesson-subject-files"><div class="card-title-row"><div><h2>Subject files</h2><p class="small-note">Materials attached to this subject rather than a specific lesson.</p></div></div><div class="lesson-files">' + subjectFiles.map(function (file) { return lessonAttachmentMarkup(file, false); }).join('') + '</div></section>' : '') +
+      '<p class="small-note lesson-storage-footnote">' + lessonFolderCounts(subject.id).files + ' attached files · Stored only on this device. File availability depends on this browser’s remaining storage capacity.</p>';
   }
 
   function timerWidget(compact) {
@@ -1585,6 +1730,7 @@
     search: ['Search', renderSearch],
     schedule: ['My Schedule', renderSchedule],
     academics: ['Academics', renderAcademics],
+    lessons: ['Lesson Organizer', renderLessonOrganizer],
     deadlines: ['Deadlines', renderDeadlines],
     notifications: ['Notifications', renderNotifications],
     progress: ['Progress', renderProgress],
@@ -1720,8 +1866,24 @@
       record = Object.assign({}, data, { id: id || makeId() });
       upsert('flashcards', record);
     } else if (type === 'subject') {
-      record = Object.assign({}, data, { id: id || makeId() });
+      record = Object.assign({}, data, { id: id || makeId(), icon: String(data.icon || '').trim().slice(0, 6), color: /^#[0-9a-f]{6}$/i.test(data.color || '') ? data.color : '#5368d8' });
       upsert('subjects', record);
+    } else if (type === 'lesson') {
+      var lessonSubject = getRecord('subjects', form.dataset.subjectId || lessonSubjectId);
+      if (!lessonSubject) return formError(form, 'Choose an existing subject before adding a lesson.');
+      if (data.lessonNumber && (!Number.isInteger(Number(data.lessonNumber)) || Number(data.lessonNumber) < 1)) return fieldProblem(form, 'lessonNumber', 'Lesson number must be a positive whole number.');
+      var existingLesson = id ? getRecord('lessons', id) : null;
+      var nextOrder = state.lessons.filter(function (item) { return item.subjectId === lessonSubject.id; }).reduce(function (highest, item) { return Math.max(highest, Number(item.order) || 0); }, 0) + 1;
+      record = Object.assign({}, data, {
+        id: id || makeId(),
+        subjectId: lessonSubject.id,
+        lessonNumber: data.lessonNumber ? Number(data.lessonNumber) : '',
+        order: existingLesson ? Number(existingLesson.order) || nextOrder : nextOrder,
+        reviewStatus: data.reviewStatus === 'Reviewed' ? 'Reviewed' : 'Not Reviewed',
+        createdAt: existingLesson ? existingLesson.createdAt : new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      upsert('lessons', record);
     } else if (type === 'assessment') {
       var score = Number(data.score); var maximum = Number(data.maximum);
       if (!isFinite(score) || !isFinite(maximum) || maximum <= 0 || score < 0 || score > maximum) return formError(form, 'Enter a nonnegative score no greater than a positive maximum score.');
@@ -1772,12 +1934,20 @@
   }
 
   function deleteRecord(collection, id, label, onDone) {
-    if (!window.confirm('Delete this ' + label + '? This cannot be undone.')) return;
+    var confirmation = collection === 'subjects'
+      ? 'Permanently delete this subject, its grade records, lessons, and all lesson files? Other tasks and schedules linked to this subject will be unlinked. This cannot be undone.'
+      : 'Delete this ' + label + '? This cannot be undone.';
+    if (!window.confirm(confirmation)) return;
     state[collection] = state[collection].filter(function (item) { return item.id !== id; });
     if (collection === 'habits') state.habitLogs = state.habitLogs.filter(function (log) { return log.habitId !== id; });
     if (collection === 'flashcards') revealedFlashcards.delete(id);
+    if (collection === 'lessons') state.lessonAttachments = state.lessonAttachments.filter(function (file) { return file.lessonId !== id; });
     if (collection === 'subjects') {
+      if (lessonSubjectId === id) lessonSubjectId = '';
       state.assessments = state.assessments.filter(function (item) { return item.subjectId !== id; });
+      var subjectLessonIds = state.lessons.filter(function (item) { return item.subjectId === id; }).map(function (item) { return item.id; });
+      state.lessons = state.lessons.filter(function (item) { return item.subjectId !== id; });
+      state.lessonAttachments = state.lessonAttachments.filter(function (file) { return file.subjectId !== id && subjectLessonIds.indexOf(file.lessonId) < 0; });
       state.tasks.forEach(function (task) { if (task.subjectId === id) task.subjectId = ''; });
       state.schedule.forEach(function (item) { if (item.subjectId === id) item.subjectId = ''; });
       state.classSchedules.forEach(function (item) { if (item.subjectId === id) item.subjectId = ''; });
@@ -1796,7 +1966,6 @@
     saveState();
     render();
   }
-
   function toggleHabit(id, date, checked) {
     var index = state.habitLogs.findIndex(function (log) { return log.habitId === id && log.date === date; });
     if (checked && index === -1) state.habitLogs.push({ habitId: id, date: date, completedAt: new Date().toISOString() });
@@ -1914,7 +2083,7 @@
 
   function hasUserData(value) {
     var defaults = freshState();
-    return ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'notifications']
+    return ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'lessons', 'lessonAttachments', 'habits', 'habitLogs', 'notifications']
       .some(function (key) { return value[key] && value[key].length; }) ||
       (value.dismissedReminders && value.dismissedReminders.length) ||
       value.timetablePreferences.startHour !== defaults.timetablePreferences.startHour ||
@@ -1926,21 +2095,52 @@
       }) || value.quoteIndex !== 0 || value.demoMode;
   }
 
-  function exportData() {
-    var backup = {
-      app: 'My PeOr',
-      schemaVersion: DATABASE_VERSION,
-      exportedAt: new Date().toISOString(),
-      data: state
-    };
-    var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var link = document.createElement('a');
-    link.href = url;
-    link.download = 'my-peor-backup-' + todayKey() + '.json';
-    link.click();
-    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-    toast('My PeOr backup downloaded.');
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error || new Error('An attachment could not be added to the backup.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function dataUrlToBlob(value) {
+    var match = /^data:([^;,]+)?;base64,([a-z0-9+/=]+)$/i.exec(value);
+    if (!match) throw new Error('Backup contains an invalid lesson attachment.');
+    var binary = atob(match[2]);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type: match[1] || 'application/octet-stream' });
+  }
+
+  async function exportData() {
+    try {
+      var backupState = cloneState(state);
+      backupState.lessonAttachments = await Promise.all(state.lessonAttachments.map(async function (file) {
+        var exportedFile = Object.assign({}, file);
+        if (!(file.data instanceof Blob)) throw new Error('An attachment is unavailable and could not be included in the backup.');
+        exportedFile.dataUrl = await blobToDataUrl(file.data);
+        delete exportedFile.data;
+        return exportedFile;
+      }));
+      var backup = {
+        app: 'My PeOr',
+        schemaVersion: DATABASE_VERSION,
+        exportedAt: new Date().toISOString(),
+        data: backupState
+      };
+      var blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = 'my-peor-backup-' + todayKey() + '.json';
+      link.click();
+      window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      toast('My PeOr backup downloaded, including lesson attachments.');
+    } catch (error) {
+      console.error('Unable to export My PeOr backup.', error);
+      toast(error && error.message ? error.message : 'The backup could not be exported.', true);
+    }
   }
 
   async function importBackup(file) {
@@ -1948,10 +2148,19 @@
       var parsed = JSON.parse(await file.text());
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Backup must contain a JSON object.');
       if (parsed.schemaVersion && parsed.schemaVersion > DATABASE_VERSION) throw new Error('This backup was created by a newer My PeOr version. Update the website before importing it.');
-      var knownKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'habits', 'habitLogs', 'preferences', 'timer', 'notifications', 'timetablePreferences'];
+      var knownKeys = ['tasks', 'schedule', 'classSchedules', 'subjects', 'assessments', 'exams', 'studySessions', 'flashcards', 'lessons', 'lessonAttachments', 'habits', 'habitLogs', 'preferences', 'timer', 'notifications', 'timetablePreferences'];
       var source = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
       if (!source || !knownKeys.some(function (key) { return Object.prototype.hasOwnProperty.call(source, key); })) {
         throw new Error('This file does not contain a My PeOr backup.');
+      }
+      if (Array.isArray(source.lessonAttachments)) {
+        source.lessonAttachments.forEach(function (file) {
+          if (file && typeof file.dataUrl === 'string') {
+            if (file.dataUrl.length > Math.ceil(MAX_LESSON_FILE_SIZE * 4 / 3) + 100) throw new Error('A lesson attachment in this backup exceeds the 15 MB file limit.');
+            file.data = dataUrlToBlob(file.dataUrl);
+            delete file.dataUrl;
+          }
+        });
       }
       var importedState = normalizeState(parsed, true);
       if (hasUserData(state) && !window.confirm('Importing this backup will replace all My PeOr data currently saved in this browser. Export a backup first if you want to keep it. Continue?')) return;
@@ -1998,6 +2207,117 @@
       console.error('Unable to clear My PeOr IndexedDB data.', error);
       toast('Unable to clear locally stored data. ' + storageErrorMessage, true);
     }
+  }
+
+  var MAX_LESSON_FILE_SIZE = 15 * 1024 * 1024;
+  var MAX_LESSON_FILES_TOTAL = 50 * 1024 * 1024;
+  var LESSON_FILE_TYPES = {
+    pdf: 'application/pdf',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    txt: 'text/plain',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    bmp: 'image/bmp'
+  };
+
+  async function saveLessonFiles(files, subjectId, lessonId, replaceId) {
+    var subject = getRecord('subjects', subjectId);
+    if (!subject) { toast('Choose an existing subject before uploading files.', true); return; }
+    var lesson = lessonId ? getRecord('lessons', lessonId) : null;
+    if (lessonId && (!lesson || lesson.subjectId !== subjectId)) { toast('The selected lesson could not be found in this subject.', true); return; }
+    var selected = Array.prototype.slice.call(files || []);
+    if (!selected.length) return;
+    if (replaceId && selected.length !== 1) { toast('Choose one file to replace the selected attachment.', true); return; }
+    var oldFile = replaceId ? getRecord('lessonAttachments', replaceId) : null;
+    if (replaceId && (!oldFile || oldFile.subjectId !== subjectId)) { toast('The attachment to replace could not be found.', true); return; }
+    var additionalSize = selected.reduce(function (sum, file) { return sum + file.size; }, 0) - (oldFile ? Number(oldFile.size) || 0 : 0);
+    var totalSize = state.lessonAttachments.reduce(function (sum, file) { return sum + (Number(file.size) || 0); }, 0);
+    if (selected.some(function (file) { return !file.name || !LESSON_FILE_TYPES[String(file.name).split('.').pop().toLowerCase()]; })) {
+      toast('Unsupported file type. Choose PDF, PPT/PPTX, DOC/DOCX, TXT, or a JPG/PNG/GIF/WEBP/BMP image.', true);
+      return;
+    }
+    if (selected.some(function (file) { return !file.size; })) {
+      toast('Empty files cannot be added as lesson materials.', true);
+      return;
+    }
+    if (selected.some(function (file) { return file.size > MAX_LESSON_FILE_SIZE; })) {
+      toast('Each file must be 15 MB or smaller.', true);
+      return;
+    }
+    if (totalSize + additionalSize > MAX_LESSON_FILES_TOTAL) {
+      toast('Lesson attachments are limited to 50 MB total in this organizer. Remove files or export a backup before adding more.', true);
+      return;
+    }
+    try {
+      selected.forEach(function (file) {
+      var extension = String(file.name).split('.').pop().toLowerCase();
+      if (file.type && file.type !== LESSON_FILE_TYPES[extension] && !(extension === 'jpg' && file.type === 'image/pjpeg')) {
+        throw new Error('The selected file type does not match its file extension: ' + file.name);
+      }
+      });
+    } catch (error) { toast(error.message, true); return; }
+    if (replaceId && !window.confirm('Replace "' + oldFile.name + '" with "' + selected[0].name + '"?')) return;
+    var uploadedAt = new Date().toISOString();
+    selected.forEach(function (file) {
+      var extension = String(file.name).split('.').pop().toLowerCase();
+      var record = {
+        id: replaceId || makeId(),
+        subjectId: subjectId,
+        lessonId: lessonId || '',
+        name: file.name,
+        type: file.type || LESSON_FILE_TYPES[extension],
+        size: file.size,
+        lastModified: file.lastModified || 0,
+        uploadedAt: uploadedAt,
+        data: file.slice(0, file.size, file.type || LESSON_FILE_TYPES[extension])
+      };
+      if (replaceId) {
+        var index = state.lessonAttachments.findIndex(function (item) { return item.id === replaceId; });
+        state.lessonAttachments[index] = record;
+      } else state.lessonAttachments.push(record);
+    });
+    var saved = await saveState();
+    render();
+    if (saved) toast(replaceId ? 'Lesson attachment replaced.' : selected.length + (selected.length === 1 ? ' file added.' : ' files added.'));
+  }
+
+  function openLessonAttachment(file, download) {
+    if (!file || !(file.data instanceof Blob)) { toast('This attachment is unavailable in browser storage.', true); return; }
+    var url = URL.createObjectURL(file.data);
+    if (download) {
+      var link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.click();
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
+  function formatLessonNotes(target) {
+    var textarea = modal.querySelector('[name="notes"]');
+    if (!textarea) return;
+    var start = textarea.selectionStart;
+    var end = textarea.selectionEnd;
+    var selected = textarea.value.slice(start, end);
+    if (target.dataset.format === 'list') {
+      var text = selected || 'List item';
+      var formatted = text.split(/\r?\n/).map(function (line) { return '- ' + line; }).join('\n');
+      textarea.setRangeText(formatted, start, end, 'select');
+    } else {
+      var marker = target.dataset.format === 'bold' ? '**' : '*';
+      var formattedText = marker + (selected || 'text') + marker;
+      textarea.setRangeText(formattedText, start, end, 'select');
+      if (!selected) textarea.setSelectionRange(start + marker.length, start + marker.length + 4);
+    }
+    textarea.focus();
   }
 
   function handleAction(action, target) {
@@ -2070,6 +2390,64 @@
       case 'add-schedule': openForm('schedule'); break;
       case 'add-class': openForm('classSchedule'); break;
       case 'add-subject': openForm('subject'); break;
+      case 'lesson-open-subject': lessonSubjectId = id; lessonSearch = ''; lessonStatusFilter = 'all'; lessonSort = 'order'; render(); main.focus({ preventScroll: true }); break;
+      case 'lesson-back': lessonSubjectId = ''; lessonSearch = ''; render(); break;
+      case 'lesson-add': lessonSubjectId = target.dataset.subject || lessonSubjectId; openForm('lesson', { subjectId: lessonSubjectId, lessonNumber: (state.lessons.filter(function (item) { return item.subjectId === lessonSubjectId; }).length + 1) }); break;
+      case 'lesson-edit': record = getRecord('lessons', id); if (record) openForm('lesson', record); break;
+      case 'lesson-delete':
+        record = getRecord('lessons', id);
+        if (record && window.confirm('Permanently delete "' + record.title + '" and its attached files? This cannot be undone.')) {
+          state.lessons = state.lessons.filter(function (item) { return item.id !== id; });
+          state.lessonAttachments = state.lessonAttachments.filter(function (file) { return file.lessonId !== id; });
+          saveState(); render(); toast('Lesson and attached files deleted.');
+        }
+        break;
+      case 'lesson-toggle-reviewed':
+        record = getRecord('lessons', id);
+        if (record) { record.reviewStatus = record.reviewStatus === 'Reviewed' ? 'Not Reviewed' : 'Reviewed'; record.updatedAt = new Date().toISOString(); saveState(); render(); }
+        break;
+      case 'lesson-move': {
+        var orderedLessons = state.lessons.filter(function (item) { return item.subjectId === lessonSubjectId; }).sort(function (a, b) { return (Number(a.order) || Number(a.lessonNumber) || 0) - (Number(b.order) || Number(b.lessonNumber) || 0); });
+        var oldIndex = orderedLessons.findIndex(function (item) { return item.id === id; });
+        var newIndex = oldIndex + (target.dataset.direction === 'up' ? -1 : 1);
+        if (oldIndex >= 0 && newIndex >= 0 && newIndex < orderedLessons.length) {
+          var oldOrder = Number(orderedLessons[oldIndex].order) || oldIndex + 1;
+          orderedLessons[oldIndex].order = Number(orderedLessons[newIndex].order) || newIndex + 1;
+          orderedLessons[newIndex].order = oldOrder;
+          saveState(); render();
+        }
+        break;
+      }
+      case 'lesson-clear-search': lessonSearch = ''; render(); break;
+      case 'lesson-upload-files':
+        var filePicker = document.querySelector('#lesson-file-input');
+        filePicker.dataset.subjectId = target.dataset.subject || lessonSubjectId;
+        filePicker.dataset.lessonId = target.dataset.lesson || '';
+        filePicker.dataset.replaceId = '';
+        filePicker.multiple = true;
+        filePicker.click();
+        break;
+      case 'attachment-replace':
+        var replacePicker = document.querySelector('#lesson-file-input');
+        record = getRecord('lessonAttachments', id);
+        if (record) {
+          replacePicker.dataset.subjectId = record.subjectId;
+          replacePicker.dataset.lessonId = record.lessonId || '';
+          replacePicker.dataset.replaceId = id;
+          replacePicker.multiple = false;
+          replacePicker.click();
+        }
+        break;
+      case 'attachment-open': record = getRecord('lessonAttachments', id); openLessonAttachment(record, false); break;
+      case 'attachment-download': record = getRecord('lessonAttachments', id); openLessonAttachment(record, true); break;
+      case 'attachment-delete':
+        record = getRecord('lessonAttachments', id);
+        if (record && window.confirm('Permanently delete "' + record.name + '" from this browser?')) {
+          state.lessonAttachments = state.lessonAttachments.filter(function (file) { return file.id !== id; });
+          saveState(); render(); toast('Attachment deleted.');
+        }
+        break;
+      case 'lesson-note-format': formatLessonNotes(target); break;
       case 'add-flashcard': openForm('flashcard'); break;
       case 'add-assessment':
         record = target.dataset.subject ? { subjectId: target.dataset.subject } : null;
@@ -2220,6 +2598,24 @@
     if (file) importBackup(file);
   });
 
+  document.querySelector('#lesson-file-input').addEventListener('change', async function (event) {
+    var picker = event.target;
+    var files = Array.prototype.slice.call(picker.files || []);
+    var subjectId = picker.dataset.subjectId;
+    var lessonId = picker.dataset.lessonId;
+    var replaceId = picker.dataset.replaceId;
+    picker.value = '';
+    picker.dataset.subjectId = '';
+    picker.dataset.lessonId = '';
+    picker.dataset.replaceId = '';
+    try {
+      await saveLessonFiles(files, subjectId, lessonId, replaceId);
+    } catch (error) {
+      console.error('Unable to add lesson attachment.', error);
+      toast(error && error.message ? error.message : 'The selected file could not be saved.', true);
+    }
+  });
+
   main.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page-link]');
     if (pageLink) { setPage(pageLink.dataset.pageLink); return; }
@@ -2249,6 +2645,8 @@
     if (target.name === 'deadline-subject') { deadlineFilters.subject = target.value; render(); }
     if (target.name === 'deadline-priority') { deadlineFilters.priority = target.value; render(); }
     if (target.name === 'deadline-status') { deadlineFilters.status = target.value; render(); }
+    if (target.name === 'lesson-status') { lessonStatusFilter = target.value; render(); }
+    if (target.name === 'lesson-sort') { lessonSort = target.value; render(); }
     if (target.name === 'schedule-date' || target.name === 'calendar-date') {
       selectedDate = target.value || todayKey();
       if (target.name === 'calendar-date') {
@@ -2288,6 +2686,14 @@
       var search = main.querySelector('[name="task-search"]');
       search.focus();
       search.setSelectionRange(position, position);
+    }
+    if (event.target.name === 'lesson-search') {
+      var lessonPosition = event.target.selectionStart;
+      lessonSearch = event.target.value;
+      render();
+      var lessonSearchInput = main.querySelector('[name="lesson-search"]');
+      lessonSearchInput.focus();
+      lessonSearchInput.setSelectionRange(lessonPosition, lessonPosition);
     }
     if (event.target.name === 'range-start') customRange.start = event.target.value;
     if (event.target.name === 'range-end') customRange.end = event.target.value;
