@@ -21,9 +21,10 @@
   var freshState = function () {
     return {
       tasks: [], schedule: [], subjects: [], assessments: [], exams: [], studySessions: [], habits: [], habitLogs: [],
-      preferences: { name: '', theme: 'system', timezone: 'Asia/Manila', dateFormat: 'medium', timeFormat: '12h', focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, notifications: false },
+      preferences: { name: '', theme: 'system', timezone: 'Asia/Manila', dateFormat: 'medium', timeFormat: '12h', focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, notifications: false, sidebarCollapsed: false },
       timer: { phase: 'focus', status: 'idle', endAt: null, remainingMs: 25 * 60000, focusCount: 0, completedSessions: [] },
       quoteIndex: 0,
+      notifications: [],
       dismissedReminders: [],
       demoMode: false
     };
@@ -36,6 +37,10 @@
   var taskCategoryFilter = 'all';
   var taskPriorityFilter = 'all';
   var taskSort = 'due';
+  var globalSearch = '';
+  var searchFilters = { type: 'all', subject: 'all', priority: 'all', status: 'all', due: 'all' };
+  var deadlineFilters = { type: 'all', subject: 'all', priority: 'all', status: 'incomplete' };
+  var showDismissedNotifications = false;
   var calendarDate = parseDate(todayKey());
   var calendarView = 'month';
   var selectedDate = todayKey();
@@ -61,6 +66,8 @@
         });
         base.preferences = Object.assign(freshState().preferences, parsed.preferences || {});
         base.timer = Object.assign(freshState().timer, parsed.timer || {});
+        base.notifications = Array.isArray(parsed.notifications) ? parsed.notifications : [];
+        base.dismissedReminders = Array.isArray(parsed.dismissedReminders) ? parsed.dismissedReminders : [];
         state = base;
       }
     } catch (error) {
@@ -74,10 +81,20 @@
       state.timer.endAt = null;
       state.timer.recoveredExpired = true;
     }
+    migrateReminderData();
+  }
+
+  function migrateReminderData() {
+    ['tasks', 'exams', 'schedule', 'studySessions'].forEach(function (collection) {
+      state[collection].forEach(function (item) {
+        if (!Array.isArray(item.reminderOffsets)) item.reminderOffsets = [];
+      });
+    });
   }
 
   function saveState() {
     try {
+      syncReminderQueue();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       storageAvailable = true;
       return true;
@@ -155,6 +172,146 @@
     return result;
   }
 
+  function itemDueEpoch(item, collection) {
+    if (!item || !item.date && !item.dueDate) return NaN;
+    var date = item.dueDate || item.date;
+    var time = item.dueTime || item.time || (collection === 'schedule' || collection === 'studySessions' ? item.startTime : '') || '23:59';
+    return zonedDateTimeToEpoch(date + 'T' + time);
+  }
+
+  function itemCollectionForType(type) {
+    return type === 'task' ? 'tasks' : type === 'exam' ? 'exams' : type === 'event' ? 'schedule' : 'studySessions';
+  }
+
+  function itemTitle(item, type) {
+    return item.title || item.topic || item.name || (type === 'event' ? 'Schedule activity' : 'Organizer reminder');
+  }
+
+  function reminderChoices(selected) {
+    selected = Array.isArray(selected) ? selected.map(String) : [];
+    var options = [['0', 'At the deadline'], ['10', '10 minutes before'], ['30', '30 minutes before'], ['60', '1 hour before'], ['1440', '1 day before']];
+    return '<div class="form-field full"><span class="form-field-label">Reminder times</span><div class="reminder-options">' +
+      options.map(function (option) {
+        return '<label class="reminder-option"><input type="checkbox" name="reminderOffsets" value="' + option[0] + '"' + (selected.includes(option[0]) ? ' checked' : '') + '><span>' + option[1] + '</span></label>';
+    }).join('') + '</div><small class="form-hint">In-app reminders and browser notifications are checked only while My PeOr is open. Browser alerts require permission; no background push service is configured.</small></div>';
+  }
+
+  function reminderDefinitions() {
+    var groups = [
+      { type: 'task', collection: 'tasks', dateField: 'dueDate', timeField: 'dueTime' },
+      { type: 'exam', collection: 'exams', dateField: 'date', timeField: 'time' },
+      { type: 'event', collection: 'schedule', dateField: 'date', timeField: 'startTime' },
+      { type: 'study', collection: 'studySessions', dateField: 'date', timeField: 'startTime' }
+    ];
+    var definitions = [];
+    groups.forEach(function (group) {
+      state[group.collection].forEach(function (item) {
+        if (item.status === 'Completed' || item.prepStatus === 'Completed') return;
+        var dueAt = itemDueEpoch(item, group.collection);
+        if (!isFinite(dueAt)) return;
+        var offsets = Array.isArray(item.reminderOffsets) ? item.reminderOffsets : [];
+        offsets.forEach(function (offset) {
+          var minutes = Number(offset);
+          if (!isFinite(minutes) || minutes < 0) return;
+          definitions.push({
+            id: ['reminder', group.type, item.id, dueAt, minutes].join(':'),
+            entityType: group.type,
+            entityId: item.id,
+            title: itemTitle(item, group.type),
+            offset: minutes,
+            dueAt: dueAt,
+            remindAt: dueAt - minutes * 60000
+          });
+        });
+        if (item.reminderAt && !offsets.length && !state.dismissedReminders.includes(item.id)) {
+          var legacyReminderAt = zonedDateTimeToEpoch(item.reminderAt);
+          if (isFinite(legacyReminderAt)) {
+            definitions.push({
+              id: ['reminder', group.type, item.id, dueAt, 'legacy', legacyReminderAt].join(':'),
+              entityType: group.type,
+              entityId: item.id,
+              title: itemTitle(item, group.type),
+              offset: null,
+              dueAt: dueAt,
+              remindAt: legacyReminderAt
+            });
+          }
+        }
+      });
+    });
+    return definitions;
+  }
+
+  function syncReminderQueue() {
+    var definitions = reminderDefinitions();
+    var activeIds = new Set(definitions.map(function (item) { return item.id; }));
+    var existing = new Map(state.notifications.map(function (item) { return [item.id, item]; }));
+    var changed = false;
+    var next = state.notifications.filter(function (notification) {
+      return notification.status !== 'scheduled' || activeIds.has(notification.id);
+    });
+    definitions.forEach(function (definition) {
+      var previous = existing.get(definition.id);
+      if (previous) {
+        if (previous.status === 'scheduled' &&
+          (previous.title !== definition.title || previous.dueAt !== definition.dueAt || previous.remindAt !== definition.remindAt)) {
+          Object.assign(previous, definition);
+          changed = true;
+        }
+        return;
+      }
+      next.push(Object.assign({}, definition, {
+        status: 'scheduled',
+        readAt: null,
+        dismissedAt: null,
+        createdAt: new Date().toISOString()
+      }));
+      changed = true;
+    });
+    if (next.length !== state.notifications.length || next.some(function (notification, index) {
+      return notification.id !== state.notifications[index].id;
+    })) {
+      state.notifications = next;
+      return true;
+    }
+    return changed;
+  }
+
+  function cancelItemReminders(type, id) {
+    state.notifications = state.notifications.filter(function (notification) {
+      return !(notification.entityType === type && notification.entityId === id && notification.status === 'scheduled');
+    });
+  }
+
+  function taskDeadlineState(item) {
+    if (item.status === 'Completed') return 'Completed';
+    if (!item.dueDate) return 'Upcoming';
+    var days = dayDifference(item.dueDate);
+    if (days < 0) return 'Overdue';
+    if (days > 0) return days === 1 ? 'Due Tomorrow' : days <= 7 ? 'Due This Week' : 'Upcoming';
+    if (itemDueEpoch(item, 'tasks') < Date.now()) return 'Overdue';
+    return 'Due Today';
+  }
+
+  function remainingDeadline(item, collection) {
+    if (item.status === 'Completed' || item.prepStatus === 'Completed') return 'Completed';
+    var due = itemDueEpoch(item, collection);
+    if (!isFinite(due)) return 'No due date';
+    var delta = due - Date.now();
+    var remainingDays = dayDifference(dateInConfiguredTimezone(new Date(due)));
+    if (delta < 0) {
+      if (remainingDays === 0) return 'Overdue today';
+      var overdueDays = Math.max(1, Math.abs(remainingDays));
+      return 'Overdue by ' + overdueDays + (overdueDays === 1 ? ' day' : ' days');
+    }
+    if (remainingDays === 1) return 'Due tomorrow';
+    if (remainingDays > 1) return 'Due in ' + remainingDays + ' days';
+    if (delta < 60000) return 'Due in less than a minute';
+    if (delta < 3600000) return 'Due in ' + Math.ceil(delta / 60000) + ' minutes';
+    if (delta < 86400000) return 'Due in ' + Math.floor(delta / 3600000) + 'h ' + Math.floor((delta % 3600000) / 60000) + 'm';
+    return 'Due soon';
+  }
+
   function parseDate(dateString) {
     if (!dateString) return null;
     var parts = dateString.split('-').map(Number);
@@ -185,16 +342,24 @@
   function timeLabel(value) {
     if (!value) return '';
     var parts = value.split(':');
-    var date = new Date();
-    date.setHours(Number(parts[0]), Number(parts[1] || 0), 0, 0);
-    return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: state.preferences.timeFormat !== '24h' }).format(date);
+    var hours = Number(parts[0]);
+    var minutes = String(Number(parts[1] || 0)).padStart(2, '0');
+    if (state.preferences.timeFormat === '24h') return String(hours).padStart(2, '0') + ':' + minutes;
+    return (hours % 12 || 12) + ':' + minutes + ' ' + (hours >= 12 ? 'PM' : 'AM');
   }
 
   function dateTimeLabel(value) {
     if (!value) return '';
-    var date = new Date(zonedDateTimeToEpoch(value));
+    var isAbsolute = typeof value === 'string' && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+    var date = new Date(isAbsolute ? value : zonedDateTimeToEpoch(value));
     if (isNaN(date.getTime())) return '';
-    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: state.preferences.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
+    }).format(date);
   }
 
   function currentTimeGreeting() {
@@ -231,7 +396,10 @@
     var days = dayDifference(task.dueDate);
     if (task.status === 'Completed') return 'Completed';
     if (days < 0) return 'Overdue by ' + Math.abs(days) + (Math.abs(days) === 1 ? ' day' : ' days');
-    if (days === 0) return task.dueTime ? 'Today at ' + timeLabel(task.dueTime) : 'Due today';
+    if (days === 0) {
+      if (itemDueEpoch(task, 'tasks') < Date.now()) return 'Overdue today';
+      return task.dueTime ? 'Today at ' + timeLabel(task.dueTime) : 'Due today';
+    }
     if (days === 1) return 'Due tomorrow';
     return 'Due in ' + days + ' days';
   }
@@ -298,7 +466,10 @@
   function formFrame(type, record, fields, submitLabel) {
     var values = record || {};
     var body = '<form data-form="' + type + '" data-id="' + escapeHtml(values.id || '') + '" novalidate><div class="form-grid">' +
-      fields.map(function (item) { return field(item.label, item.name, item.type, values[item.name] != null ? values[item.name] : item.value, item); }).join('') +
+      fields.map(function (item) {
+        return item.type === 'reminders' ? reminderChoices(values.reminderOffsets) :
+          field(item.label, item.name, item.type, values[item.name] != null ? values[item.name] : item.value, item);
+      }).join('') +
       '</div><div class="form-actions"><button class="button" type="button" data-action="close-modal">Cancel</button><button class="button primary" type="submit">' + (submitLabel || 'Save') + '</button></div></form>';
     return body;
   }
@@ -320,7 +491,7 @@
         { label: 'Category', name: 'category', type: 'select', choices: ['Personal', 'School', 'Study', 'Project', 'Other'], value: 'Personal' },
         { label: 'Subject', name: 'subjectId', type: 'select', choices: [''].concat(state.subjects.map(function (item) { return item.id; })), hint: 'Optional' },
         { label: 'Estimated duration (minutes)', name: 'estimatedMinutes', type: 'number', min: 1, step: 1 },
-        { label: 'Reminder', name: 'reminderAt', type: 'datetime-local', hint: 'In-app reminders are available while this page is open.' },
+        { label: 'Reminders', name: 'reminderOffsets', type: 'reminders' },
         { label: 'Recurrence', name: 'recurrence', type: 'select', choices: ['None', 'Daily', 'Weekly', 'Monthly'], value: 'None', hint: 'Saved as a preference; entries are not auto-created.' }
       ];
       fields[7].choices = [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; }));
@@ -333,7 +504,8 @@
         { label: 'Start time', name: 'startTime', type: 'time', required: true },
         { label: 'End time', name: 'endTime', type: 'time', required: true },
         { label: 'Subject', name: 'subjectId', type: 'select', choices: [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; })) },
-        { label: 'Description', name: 'description', type: 'textarea', full: true }
+        { label: 'Description', name: 'description', type: 'textarea', full: true },
+        { label: 'Reminders', name: 'reminderOffsets', type: 'reminders' }
       ];
     } else if (type === 'subject') {
       title = id ? 'Edit subject' : 'Add subject';
@@ -366,7 +538,8 @@
         { label: 'Preparation status', name: 'prepStatus', type: 'select', choices: ['Not Started', 'Reviewing', 'Almost Ready', 'Completed'], value: 'Not Started' },
         { label: 'Priority', name: 'priority', type: 'select', choices: ['Low', 'Medium', 'High', 'Urgent'], value: 'Medium' },
         { label: 'Topics covered', name: 'topics', type: 'textarea', full: true },
-        { label: 'Notes', name: 'notes', type: 'textarea', full: true }
+        { label: 'Notes', name: 'notes', type: 'textarea', full: true },
+        { label: 'Reminders', name: 'reminderOffsets', type: 'reminders' }
       ];
       fields[1].choices = [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; }));
     } else if (type === 'study') {
@@ -379,7 +552,8 @@
         { label: 'Planned duration (minutes)', name: 'plannedMinutes', type: 'number', min: 1, step: 1, value: 25 },
         { label: 'Status', name: 'status', type: 'select', choices: ['Planned', 'Completed'], value: 'Planned' },
         { label: 'Actual minutes studied', name: 'actualMinutes', type: 'number', min: 0, step: 1 },
-        { label: 'Notes', name: 'notes', type: 'textarea', full: true }
+        { label: 'Notes', name: 'notes', type: 'textarea', full: true },
+        { label: 'Reminders', name: 'reminderOffsets', type: 'reminders' }
       ];
       fields[0].choices = [{ value: '', label: 'No subject' }].concat(state.subjects.map(function (item) { return { value: item.id, label: item.name }; }));
     } else if (type === 'habit') {
@@ -446,48 +620,265 @@
     var todays = dayTasks(today);
     var completed = todays.filter(function (task) { return task.status === 'Completed'; }).length;
     var remaining = todays.length - completed;
-    var upcoming = state.tasks.filter(function (task) {
-      return task.status !== 'Completed' && task.dueDate && dayDifference(task.dueDate) >= 0 && dayDifference(task.dueDate) <= 7;
-    }).length + state.exams.filter(function (exam) { return dayDifference(exam.date) >= 0 && dayDifference(exam.date) <= 7; }).length;
+    var overdueTasks = state.tasks.filter(function (task) { return taskDeadlineState(task) === 'Overdue'; });
+    var deadlinesToday = state.tasks.filter(function (task) { return taskDeadlineState(task) === 'Due Today'; });
+    var upcoming = buildDeadlineRecords().filter(function (item) {
+      return (item.kind === 'task' || item.kind === 'exam') &&
+        (item.status === 'Due Tomorrow' || item.status === 'Due This Week');
+    }).length;
     var habits = todaysHabits();
     var doneHabits = habits.filter(function (habit) { return habitDone(habit.id, today); }).length;
     var focusToday = completedStudyMinutes(today, today);
     var percent = todays.length ? Math.round(completed / todays.length * 100) : 0;
-    var deadlines = state.tasks.filter(function (task) { return task.dueDate && task.status !== 'Completed' && dayDifference(task.dueDate) >= -7 && dayDifference(task.dueDate) <= 7; }).map(function (task) {
-      return { id: task.id, title: task.title, date: task.dueDate, time: task.dueTime || '', kind: 'task', status: statusForTask(task), hint: dueHint(task) };
-    }).concat(state.exams.filter(function (exam) { return exam.date && dayDifference(exam.date) >= 0 && dayDifference(exam.date) <= 7; }).map(function (exam) {
-      return { id: exam.id, title: exam.title, date: exam.date, time: exam.time || '', kind: 'exam', status: dayDifference(exam.date) === 0 ? 'Due Today' : 'Upcoming', hint: subjectName(exam.subjectId) || 'Exam' };
-    })).sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); }).slice(0, 5);
+    var deadlines = buildDeadlineRecords().filter(function (item) {
+      return item.status !== 'Completed' && item.days >= -1 && item.days <= 7;
+    }).sort(function (a, b) { return a.dueAt - b.dueAt; }).slice(0, 5);
     var schedule = state.schedule.filter(function (item) { return item.date === today; }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); }).slice(0, 4);
+    var highPriority = state.tasks.filter(function (task) {
+      return task.status !== 'Completed' && (task.priority === 'High' || task.priority === 'Urgent');
+    }).sort(function (a, b) {
+      return priorityWeight(a.priority) - priorityWeight(b.priority) ||
+        ((a.dueDate || '9999-99-99') + (a.dueTime || '')).localeCompare((b.dueDate || '9999-99-99') + (b.dueTime || ''));
+    }).slice(0, 4);
+    var upcomingEvents = buildDeadlineRecords().filter(function (item) {
+      return item.kind !== 'task' && item.status !== 'Completed' && item.status !== 'Overdue' && item.days >= 0 && item.days <= 7;
+    }).sort(function (a, b) { return a.dueAt - b.dueAt; }).slice(0, 4);
     var quoteList = [
       { text: 'Great things are done by a series of small things brought together.', author: 'Vincent van Gogh' },
       { text: 'It always seems impossible until it is done.', author: 'Nelson Mandela' },
       { text: 'The secret of getting ahead is getting started.', author: 'Mark Twain' },
       { text: 'Learning never exhausts the mind.', author: 'Leonardo da Vinci' }
     ];
-    var quote = quoteList[state.quoteIndex % quoteList.length];
+    var todayDate = parseDate(today);
+    var dayOfYear = Math.floor((Date.UTC(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate()) - Date.UTC(todayDate.getFullYear(), 0, 1)) / 86400000);
+    var quote = quoteList[(dayOfYear + state.quoteIndex) % quoteList.length];
     var notice = storageAvailable ? '<div class="notice warning" style="margin-bottom:18px"><strong>Local demo mode.</strong> Your data is saved in this browser only. Sign-in and cross-device cloud sync are not configured. See Settings for the backend setup required.' + (state.demoMode ? ' Sample records are loaded and marked as demo data; remove them from Settings at any time.' : '') + '</div>' :
       '<div class="notice error" style="margin-bottom:18px">Browser storage is unavailable. Changes may not persist after this page is closed.</div>';
 
     return notice +
       '<div class="welcome-row"><div><p class="eyebrow">Your overview</p><h1 class="greeting">' + currentTimeGreeting() + (state.preferences.name ? ', ' + escapeHtml(state.preferences.name) : '') + '</h1><p class="greeting-sub">Let’s make today productive.</p>' +
       '<div class="progress-line"><span>Daily progress</span><span class="progress-track"><span class="progress-fill" style="display:block;width:' + percent + '%"></span></span><span>' + percent + '%</span></div></div><div class="date-label">' + escapeHtml(new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(parseDate(today))) + '</div></div>' +
+      '<div class="dashboard-actions"><button class="button primary" data-action="add-task">＋ Add task</button><button class="button" data-action="add-schedule">＋ Add event</button><button class="button" data-action="add-study">＋ Add study session</button><button class="button" data-page-link="tasks">View all tasks →</button></div>' +
       '<section class="summary-grid">' +
-      summaryCard('Tasks Today', completed + ' / ' + todays.length, remaining + ' remaining', '☷') +
-      summaryCard('Upcoming Deadlines', String(upcoming), 'Due within 7 days', '◷') +
-      summaryCard('Study Time', formatMinutes(focusToday), 'Recorded completed study time today', '◎') +
-      summaryCard('Habit Progress', doneHabits + ' / ' + habits.length, 'Habits completed today', '✓') + '</section>' +
+      summaryCard('Tasks Today', completed + ' / ' + todays.length, remaining + ' remaining · ' + percent + '% complete', '☷') +
+      summaryCard('Overdue', String(overdueTasks.length), 'Incomplete past deadlines', '!') +
+      summaryCard('Due Today', String(deadlinesToday.length), 'Tasks requiring attention', '◷') +
+      summaryCard('Coming Soon', String(upcoming), 'Deadlines in the next 7 days', '⌛') + '</section>' +
+      '<section class="summary-strip"><span>Study time today <strong>' + formatMinutes(focusToday) + '</strong></span><span>Habits today <strong>' + doneHabits + ' / ' + habits.length + '</strong></span></section>' +
       '<div class="dashboard-grid"><div class="stack">' +
-      '<section class="card"><div class="card-title-row"><h2>Today’s tasks</h2><button class="text-button" data-page-link="tasks">View all</button></div>' +
+      '<section class="card"><div class="card-title-row"><h2>Tasks due today</h2><button class="text-button" data-page-link="tasks">View all tasks</button></div>' +
       (todays.length ? '<div class="task-list">' + todays.sort(function (a, b) { return (a.dueTime || '').localeCompare(b.dueTime || ''); }).map(function (task) { return taskMarkup(task, false); }).join('') + '</div>' : emptyState('You’re all caught up.', 'Add a task to get started.', 'add-task', 'Add a task')) + '</section>' +
+      (overdueTasks.length ? '<section class="card"><div class="card-title-row"><h2>Overdue tasks</h2><button class="text-button" data-page-link="deadlines">Review deadlines</button></div><div class="task-list">' + overdueTasks.slice(0, 4).map(function (task) { return taskMarkup(task, false); }).join('') + '</div></section>' : '') +
       '<section class="card"><div class="card-title-row"><h2>Daily schedule</h2><button class="text-button" data-page-link="schedule">Open schedule</button></div>' +
       (schedule.length ? schedule.map(function (item) { return '<div class="schedule-row"><span class="summary-icon">◷</span><div class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(timeLabel(item.startTime)) + ' – ' + escapeHtml(timeLabel(item.endTime)) + (item.subjectId ? ' · ' + escapeHtml(subjectName(item.subjectId)) : '') + '</small></div></div>'; }).join('') : emptyState('No schedule for today.', 'Add a block to plan your routine.', 'add-schedule', 'Add schedule block')) + '</section></div>' +
       '<div class="stack"><section class="card"><div class="card-title-row"><h2>Upcoming deadlines</h2><span class="muted">Tasks &amp; exams</span></div>' +
-      (deadlines.length ? deadlines.map(function (item) { return '<button class="deadline-row text-button w-100" data-action="' + (item.kind === 'exam' ? 'edit-exam' : 'edit-task') + '" data-id="' + escapeHtml(item.id) + '"><span class="deadline-date"><strong>' + escapeHtml(parseDate(item.date).getDate()) + '</strong>' + escapeHtml(parseDate(item.date).toLocaleDateString(undefined, { month: 'short' })) + '</span><span class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.hint) + (item.time ? ' · ' + escapeHtml(timeLabel(item.time)) : '') + '</small></span><span class="status-pill ' + statusClass(item.status) + '">' + escapeHtml(item.status) + '</span></button>'; }).join('') : emptyState('No upcoming deadlines.', 'You have a clear week ahead.')) + '</section>' +
+      (deadlines.length ? deadlines.map(deadlineDashboardRow).join('') : emptyState('No upcoming deadlines.', 'You have a clear week ahead.')) +
+      (upcomingEvents.length ? '<div class="card-title-row" style="margin-top:15px"><h3>Upcoming events</h3><button class="text-button" data-page-link="calendar">Calendar</button></div>' + upcomingEvents.map(deadlineDashboardRow).join('') : '') + '</section>' +
+      '<section class="card"><div class="card-title-row"><h2>High-priority tasks</h2><button class="text-button" data-page-link="tasks">All tasks</button></div>' +
+      (highPriority.length ? highPriority.map(function (task) { return taskMarkup(task, false); }).join('') : emptyState('No high-priority tasks.', 'High and urgent incomplete tasks will show here.')) + '</section>' +
       '<section class="card quote-card"><div class="card-title-row"><h2>A little inspiration</h2><button class="icon-button quote-refresh" data-action="quote" aria-label="Show another quote" title="Show another quote">↻</button></div><p class="quote-text">“' + escapeHtml(quote.text) + '”</p><p class="quote-author">— ' + escapeHtml(quote.author) + '</p></section>' +
       timerWidget() + '</div></div>';
   }
 
+  function deadlineDashboardRow(item) {
+    var day = parseDate(item.date);
+    var action = editActionForType(item.kind);
+    return '<button class="deadline-row text-button w-100" data-action="' + action + '" data-id="' + escapeHtml(item.id) + '"><span class="deadline-date"><strong>' + escapeHtml(day.getDate()) + '</strong>' + escapeHtml(day.toLocaleDateString(undefined, { month: 'short' })) + '</span><span class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.remaining) + (item.time ? ' · ' + escapeHtml(timeLabel(item.time)) : '') + (item.subject ? ' · ' + escapeHtml(item.subject) : '') + '</small></span><span class="status-pill ' + statusClass(item.status === 'Due Tomorrow' || item.status === 'Due This Week' ? 'Upcoming' : item.status) + '">' + escapeHtml(item.status) + '</span></button>';
+  }
+
+  function priorityWeight(value) {
+    return ({ Urgent: 0, High: 1, Medium: 2, Low: 3 })[value] || 4;
+  }
+
+  function buildDeadlineRecords() {
+    var groups = [
+      { kind: 'task', collection: 'tasks', dateField: 'dueDate', timeField: 'dueTime' },
+      { kind: 'exam', collection: 'exams', dateField: 'date', timeField: 'time' },
+      { kind: 'event', collection: 'schedule', dateField: 'date', timeField: 'startTime' },
+      { kind: 'study', collection: 'studySessions', dateField: 'date', timeField: 'startTime' }
+    ];
+    return groups.reduce(function (all, group) {
+      return all.concat(state[group.collection].filter(function (item) {
+        return item[group.dateField];
+      }).map(function (item) {
+        var date = item[group.dateField];
+        var time = item[group.timeField] || '';
+        var days = dayDifference(date);
+        var done = item.status === 'Completed' || item.prepStatus === 'Completed';
+        var status;
+        if (done) status = 'Completed';
+        else if (days < 0 || days === 0 && itemDueEpoch(item, group.collection) < Date.now()) status = 'Overdue';
+        else if (days === 0) status = 'Due Today';
+        else if (days === 1) status = 'Due Tomorrow';
+        else if (days <= 7) status = 'Due This Week';
+        else status = 'Upcoming';
+        return {
+          id: item.id,
+          kind: group.kind,
+          collection: group.collection,
+          title: itemTitle(item, group.kind),
+          date: date,
+          time: time,
+          dueAt: itemDueEpoch(item, group.collection),
+          days: days,
+          status: status,
+          priority: item.priority || 'Medium',
+          subjectId: item.subjectId || '',
+          subject: subjectName(item.subjectId),
+          category: item.category || (group.kind === 'exam' ? 'Exam' : group.kind === 'event' ? 'Event' : group.kind === 'study' ? 'Study' : 'Task'),
+          description: item.description || item.topics || item.notes || '',
+          remaining: remainingDeadline(item, group.collection)
+        };
+      }));
+    }, []).sort(function (a, b) {
+      if (a.status === 'Completed' && b.status !== 'Completed') return 1;
+      if (b.status === 'Completed' && a.status !== 'Completed') return -1;
+      return a.dueAt - b.dueAt;
+    });
+  }
+
+  function editActionForType(type) {
+    return type === 'task' ? 'edit-task' : type === 'exam' ? 'edit-exam' : type === 'event' ? 'edit-schedule' : 'edit-study';
+  }
+
+  function renderDeadlines() {
+    var records = buildDeadlineRecords().filter(function (item) {
+      if (deadlineFilters.type !== 'all' && item.kind !== deadlineFilters.type) return false;
+      if (deadlineFilters.subject !== 'all' && item.subjectId !== deadlineFilters.subject) return false;
+      if (deadlineFilters.priority !== 'all' && item.priority !== deadlineFilters.priority) return false;
+      if (deadlineFilters.status === 'completed' && item.status !== 'Completed') return false;
+      if (deadlineFilters.status === 'incomplete' && item.status === 'Completed') return false;
+      if (deadlineFilters.status === 'overdue' && item.status !== 'Overdue') return false;
+      if (deadlineFilters.status === 'today' && item.status !== 'Due Today') return false;
+      if (deadlineFilters.status === 'tomorrow' && item.status !== 'Due Tomorrow') return false;
+      if (deadlineFilters.status === 'week' && item.status !== 'Due This Week') return false;
+      return true;
+    });
+    var groups = ['Overdue', 'Due Today', 'Due Tomorrow', 'Due This Week', 'Upcoming', 'Completed'];
+    var grouped = groups.map(function (status) {
+      var items = records.filter(function (item) { return item.status === status; });
+      if (!items.length) return '';
+      return '<section class="deadline-group"><h2 class="deadline-group-title"><span>' + status + '</span><span>' + items.length + '</span></h2>' +
+        items.map(deadlineCard).join('') + '</section>';
+    }).join('');
+    var subjects = state.subjects.map(function (subject) { return '<option value="' + escapeHtml(subject.id) + '"' + (deadlineFilters.subject === subject.id ? ' selected' : '') + '>' + escapeHtml(subject.name) + '</option>'; }).join('');
+    return pageHeading('Smart Deadlines', 'See what needs attention, sorted by the nearest due date.', '<button class="button" data-action="deadline-reset">Reset filters</button><button class="button primary" data-action="add-task">＋ Add deadline</button>') +
+      '<div class="summary-grid">' + summaryCard('Overdue', String(records.filter(function (item) { return item.status === 'Overdue'; }).length), 'Incomplete past deadlines', '!') +
+      summaryCard('Due Today', String(records.filter(function (item) { return item.status === 'Due Today'; }).length), 'Needs attention today', '◷') +
+      summaryCard('Coming Soon', String(records.filter(function (item) { return ['Due Tomorrow', 'Due This Week', 'Upcoming'].includes(item.status); }).length), 'Future incomplete items', '⌛') +
+      summaryCard('Completed', String(records.filter(function (item) { return item.status === 'Completed'; }).length), 'Completed items in this view', '✓') + '</div>' +
+      '<section class="card"><div class="filter-grid">' +
+      filterControl('Type', 'deadline-type', deadlineFilters.type, [['all', 'All types'], ['task', 'Tasks'], ['exam', 'Exams'], ['event', 'Events'], ['study', 'Study sessions']]) +
+      filterControl('Subject', 'deadline-subject', deadlineFilters.subject, [['all', 'All subjects']].concat(state.subjects.map(function (subject) { return [subject.id, subject.name]; }))) +
+      filterControl('Priority', 'deadline-priority', deadlineFilters.priority, [['all', 'All priorities'], ['Urgent', 'Urgent'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low']]) +
+      filterControl('Completion', 'deadline-status', deadlineFilters.status, [['all', 'All statuses'], ['incomplete', 'Incomplete'], ['overdue', 'Overdue'], ['today', 'Due Today'], ['tomorrow', 'Due Tomorrow'], ['week', 'Due This Week'], ['completed', 'Completed']]) +
+      '</div>' + (grouped || emptyState('No deadlines match these filters.', 'Try changing a filter or add an item with a due date.', 'deadline-reset', 'Reset filters')) + '</section>';
+  }
+
+  function filterControl(label, name, value, choices) {
+    return '<label>' + label + '<select name="' + name + '">' + choices.map(function (option) {
+      return '<option value="' + escapeHtml(option[0]) + '"' + (option[0] === value ? ' selected' : '') + '>' + escapeHtml(option[1]) + '</option>';
+    }).join('') + '</select></label>';
+  }
+
+  function deadlineCard(item) {
+    var dateText = dateLabel(item.date, { year: 'numeric', month: 'long', day: 'numeric' });
+    var dateTime = dateText + (item.time ? ' · ' + timeLabel(item.time) : '');
+    var action = editActionForType(item.kind);
+    var finished = item.status === 'Completed';
+    return '<article class="deadline-item' + (item.status === 'Overdue' ? ' overdue' : '') + (item.priority === 'Urgent' && !finished ? ' urgent' : '') + '">' +
+      (item.kind === 'task' ? '<input class="check" type="checkbox" data-action="toggle-task" data-id="' + escapeHtml(item.id) + '" aria-label="Complete ' + escapeHtml(item.title) + '"' + (finished ? ' checked' : '') + '>' : '<span class="summary-icon">' + (item.kind === 'exam' ? '◇' : item.kind === 'event' ? '◷' : '◎') + '</span>') +
+      '<div class="deadline-main"><button class="text-button deadline-title" data-action="' + action + '" data-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.title) + '</button><div class="deadline-detail"><span>' + escapeHtml(dateTime) + '</span><span>' + escapeHtml(item.remaining) + '</span><span>' + escapeHtml(item.subject || item.kind) + '</span><span class="priority ' + priorityClass(item.priority) + '">' + escapeHtml(item.priority) + '</span>' + (item.kind === 'task' ? '<span class="status-pill">' + escapeHtml(item.category) + '</span>' : '') + '</div></div>' +
+      '<div class="deadline-controls"><span class="status-pill ' + statusClass(item.status === 'Due Tomorrow' || item.status === 'Due This Week' ? 'Upcoming' : item.status) + '">' + escapeHtml(item.status) + '</span><button class="icon-button" data-action="' + action + '" data-id="' + escapeHtml(item.id) + '" aria-label="Edit ' + escapeHtml(item.title) + '">✎</button></div></article>';
+  }
+
+  function searchableRecords() {
+    var records = [];
+    state.tasks.forEach(function (item) {
+      records.push({ id: item.id, kind: 'task', collection: 'tasks', title: item.title, description: item.description || '', subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: item.priority || 'Medium', status: item.status === 'Completed' ? 'Completed' : taskDeadlineState(item), date: item.dueDate || '', time: item.dueTime || '', category: item.category || 'Task', action: 'edit-task' });
+    });
+    state.exams.forEach(function (item) {
+      records.push({ id: item.id, kind: 'exam', collection: 'exams', title: item.title, description: [item.topics, item.notes].filter(Boolean).join(' '), subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: item.priority || 'Medium', status: item.prepStatus === 'Completed' ? 'Completed' : item.prepStatus || 'Scheduled', date: item.date || '', time: item.time || '', category: 'Exam', action: 'edit-exam' });
+    });
+    state.schedule.forEach(function (item) {
+      records.push({ id: item.id, kind: 'event', collection: 'schedule', title: item.title, description: item.description || '', subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: 'Medium', status: 'Scheduled', date: item.date || '', time: item.startTime || '', category: item.category || 'Event', action: 'edit-schedule' });
+    });
+    state.studySessions.forEach(function (item) {
+      records.push({ id: item.id, kind: 'study', collection: 'studySessions', title: item.topic, description: item.notes || '', subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: 'Medium', status: item.status || 'Planned', date: item.date || '', time: item.startTime || '', category: 'Study session', action: 'edit-study' });
+    });
+    state.subjects.forEach(function (item) {
+      records.push({ id: item.id, kind: 'subject', collection: 'subjects', title: item.name, description: [item.code, item.instructor, item.period, item.description].filter(Boolean).join(' '), subjectId: item.id, subject: item.name, priority: '', status: '', date: '', time: '', category: 'Subject', action: 'edit-subject' });
+    });
+    state.assessments.forEach(function (item) {
+      records.push({ id: item.id, kind: 'assessment', collection: 'assessments', title: item.name, description: subjectName(item.subjectId) + ' ' + item.score + '/' + item.maximum, subjectId: item.subjectId || '', subject: subjectName(item.subjectId), priority: '', status: '', date: item.date || '', time: '', category: 'Assessment', action: 'edit-assessment' });
+    });
+    state.habits.forEach(function (item) {
+      records.push({ id: item.id, kind: 'habit', collection: 'habits', title: item.name, description: item.description || '', subjectId: '', subject: '', priority: '', status: item.active || 'Active', date: '', time: '', category: 'Habit', action: 'edit-habit' });
+    });
+    return records;
+  }
+
+  function renderSearch() {
+    var query = globalSearch.trim().toLowerCase();
+    var results = searchableRecords().filter(function (item) {
+      var text = [item.title, item.description, item.subject, item.category, item.status].join(' ').toLowerCase();
+      if (query && !text.includes(query)) return false;
+      if (searchFilters.type !== 'all' && item.kind !== searchFilters.type) return false;
+      if (searchFilters.subject !== 'all' && item.subjectId !== searchFilters.subject) return false;
+      if (searchFilters.priority !== 'all' && item.priority !== searchFilters.priority) return false;
+      if (searchFilters.status === 'completed' && item.status !== 'Completed') return false;
+      if (searchFilters.status === 'incomplete' && item.status === 'Completed') return false;
+      if (searchFilters.status === 'high' && !['High', 'Urgent'].includes(item.priority)) return false;
+      if (searchFilters.due !== 'all') {
+        if (searchFilters.due === 'completed') return item.status === 'Completed';
+        if (!item.date) return false;
+        var days = dayDifference(item.date);
+        if (searchFilters.due === 'today' && days !== 0) return false;
+        if (searchFilters.due === 'upcoming' && (days <= 0 || item.status === 'Completed')) return false;
+        if (searchFilters.due === 'overdue') {
+          var record = getRecord(item.collection, item.id);
+          var pastDue = days < 0 || days === 0 && record && itemDueEpoch(record, item.collection) < Date.now();
+          if (!pastDue || item.status === 'Completed') return false;
+        }
+      }
+      return true;
+    }).sort(function (a, b) {
+      return ((a.date || '9999-99-99') + (a.time || '')).localeCompare((b.date || '9999-99-99') + (b.time || ''));
+    });
+    return pageHeading('Search results', 'Search tasks, descriptions, subjects, exams, events, study sessions, grades, and habits.', '<button class="button" data-action="search-reset">Reset filters</button>') +
+      '<section class="card"><div class="filter-grid">' +
+      filterControl('Item type', 'search-type', searchFilters.type, [['all', 'All items'], ['task', 'Tasks'], ['event', 'Events'], ['exam', 'Exams'], ['study', 'Study sessions'], ['subject', 'Subjects'], ['assessment', 'Assessments'], ['habit', 'Habits']]) +
+      filterControl('Subject', 'search-subject', searchFilters.subject, [['all', 'All subjects']].concat(state.subjects.map(function (item) { return [item.id, item.name]; }))) +
+      filterControl('Priority', 'search-priority', searchFilters.priority, [['all', 'All priorities'], ['Urgent', 'Urgent'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low']]) +
+      filterControl('Status', 'search-status', searchFilters.status, [['all', 'All statuses'], ['incomplete', 'Incomplete'], ['completed', 'Completed'], ['high', 'High priority']]) +
+      filterControl('Due date', 'search-due', searchFilters.due, [['all', 'Any date'], ['today', 'Today'], ['upcoming', 'Upcoming'], ['overdue', 'Overdue'], ['completed', 'Completed']]) +
+      '</div><div class="card-title-row"><h2>' + (query ? 'Matches for “' + escapeHtml(globalSearch.trim()) + '”' : 'All organizer items') + '</h2><span class="muted">' + results.length + ' results</span></div>' +
+      (results.length ? results.map(function (item) { return '<article class="search-result"><div class="search-result-main"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.kind + ' · ' + (item.subject || item.category) + (item.date ? ' · ' + dateLabel(item.date) + (item.time ? ' at ' + timeLabel(item.time) : '') : '') + (item.description ? ' · ' + item.description : '')) + '</small></div><div><span class="search-type">' + escapeHtml(item.priority || item.status || item.kind) + '</span> <button class="icon-button" data-action="' + item.action + '" data-id="' + escapeHtml(item.id) + '" aria-label="Open ' + escapeHtml(item.title) + '">↗</button></div></article>'; }).join('') : emptyState('No matching items.', 'Try a different search or reset one or more filters.')) + '</section>';
+  }
+
+  function renderNotifications() {
+    var items = state.notifications.filter(function (item) {
+      return showDismissedNotifications || !item.dismissedAt;
+    }).sort(function (a, b) {
+      if (a.status === 'unread' && b.status !== 'unread') return -1;
+      if (b.status === 'unread' && a.status !== 'unread') return 1;
+      return (a.remindAt || 0) - (b.remindAt || 0);
+    });
+    var unread = state.notifications.filter(function (item) { return item.status === 'unread' && !item.dismissedAt; }).length;
+    return pageHeading('Notifications', 'Scheduled reminders and recent alerts for your saved organizer items.', '<button class="button" data-action="notifications-read-all">Mark all read</button><button class="button" data-action="notifications-dismissed">' + (showDismissedNotifications ? 'Hide dismissed' : 'Show dismissed') + '</button>') +
+      '<div class="notice info" style="margin-bottom:15px">In-app reminders and browser notifications are checked only while My PeOr is open. Browser notifications require permission and may be restricted by device settings. No service worker or server-side background push service is configured.</div>' +
+      '<section class="card"><div class="card-title-row"><h2>Reminder center</h2><span class="status-pill">' + unread + ' unread</span></div>' +
+      (items.length ? items.map(function (item) {
+        var record = getRecord(itemCollectionForType(item.entityType), item.entityId);
+        var typeName = item.entityType === 'event' ? 'schedule' : item.entityType;
+        var dueMessage = item.status === 'scheduled' ? 'Reminder at ' + dateTimeLabel(new Date(item.remindAt).toISOString()) : item.status === 'unread' ? 'Reminder is due' : 'Reminder';
+        return '<article class="notification-item' + (item.status === 'unread' ? ' unread' : '') + '"><span class="summary-icon">' + (item.status === 'scheduled' ? '◷' : '♧') + '</span><div class="notification-copy"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(dueMessage + ' · ' + (record ? itemTitle(record, typeName) : 'Item removed') + ' · deadline ' + dateTimeLabel(new Date(item.dueAt).toISOString())) + '</small></div><div class="notification-actions">' +
+          (record ? '<button class="icon-button" data-action="' + editActionForType(typeName) + '" data-id="' + escapeHtml(item.entityId) + '" aria-label="Open reminder item">↗</button>' : '') +
+          (item.status === 'unread' ? '<button class="icon-button" data-action="notification-read" data-id="' + escapeHtml(item.id) + '" aria-label="Mark as read">✓</button>' : '') +
+          (!item.dismissedAt ? '<button class="icon-button" data-action="notification-dismiss" data-id="' + escapeHtml(item.id) + '" aria-label="Dismiss notification">×</button>' : '') +
+          '</div></article>';
+      }).join('') : emptyState('No notifications yet.', 'Choose reminder times on a task, event, exam, or study session.')) + '</section>';
+  }
   function summaryCard(title, value, hint, icon) {
     return '<article class="summary-card"><div class="summary-top"><span>' + escapeHtml(title) + '</span><span class="summary-icon">' + icon + '</span></div><div class="summary-value">' + escapeHtml(value) + '</div><div class="summary-hint">' + escapeHtml(hint) + '</div></article>';
   }
@@ -777,8 +1168,8 @@
 
   function renderSettings() {
     var p = state.preferences;
-    var reminders = state.tasks.filter(function (task) { return task.reminderAt && zonedDateTimeToEpoch(task.reminderAt) > Date.now() && task.status !== 'Completed'; }).sort(function (a, b) { return zonedDateTimeToEpoch(a.reminderAt) - zonedDateTimeToEpoch(b.reminderAt); });
-    var permission = 'Not requested';
+    var reminders = state.notifications.filter(function (notification) { return notification.status === 'scheduled' && !notification.dismissedAt; }).sort(function (a, b) { return a.remindAt - b.remindAt; });
+    var permission = 'unsupported';
     if ('Notification' in window) permission = Notification.permission;
     return pageHeading('Settings', 'Personalize your organizer and manage local data.', '') +
       '<div class="section-grid"><section class="card"><div class="card-title-row"><h2>Profile &amp; preferences</h2></div>' +
@@ -793,8 +1184,9 @@
       settingsInput('Long break (minutes)', 'longBreakMinutes', p.longBreakMinutes, 'number', '', 1) +
       '<div class="form-field full"><button class="button primary" type="submit">Save preferences</button></div></form></section>' +
       '<div class="stack"><section class="card"><div class="card-title-row"><h2>Reminders &amp; notifications</h2><span class="status-pill">' + escapeHtml(permission) + '</span></div><p class="small-note">In-app reminders are checked while My PeOr is open. Browser notifications are optional and require your permission. There is no background notification service configured.</p>' +
-      '<button class="button" data-action="notifications">' + (permission === 'granted' ? 'Browser notifications allowed' : 'Enable browser notifications') + '</button>' +
-      (reminders.length ? '<div class="task-list" style="margin-top:12px">' + reminders.map(function (task) { return '<div class="simple-row"><span class="row-info"><strong>' + escapeHtml(task.title) + '</strong><small>' + escapeHtml(dateTimeLabel(task.reminderAt)) + '</small></span></div>'; }).join('') + '</div>' : '<p class="small-note">No upcoming reminders configured.</p>') + '</section>' +
+      '<button class="button" data-action="notifications"' + (permission === 'denied' || permission === 'unsupported' ? ' disabled' : '') + '>' + (permission === 'denied' ? 'Blocked in browser settings' : permission === 'unsupported' ? 'Browser notifications unavailable' : p.notifications ? 'Disable browser notifications' : 'Enable browser notifications') + '</button>' +
+      (permission === 'denied' ? '<p class="small-note">To try browser alerts again, allow notifications for this site in your browser settings. In-app reminders remain available while My PeOr is open.</p>' : '') +
+      (reminders.length ? '<div class="task-list" style="margin-top:12px">' + reminders.map(function (item) { return '<div class="simple-row"><span class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(dateTimeLabel(new Date(item.remindAt).toISOString())) + '</small></span></div>'; }).join('') + '</div>' : '<p class="small-note">No upcoming reminders configured.</p>') + '</section>' +
       '<section class="card"><div class="card-title-row"><h2>Data &amp; account</h2></div><div class="notice warning"><strong>Cloud account is not configured.</strong> This site currently has no authentication provider or database. Browser data is not a secure account and is not synchronized to other devices.</div>' +
       '<div class="setting-row"><div><strong>Local demo data</strong><small>' + (state.demoMode ? 'Sample records are loaded. They are marked as demo data.' : 'No sample records loaded.') + '</small></div><button class="button" data-action="demo">' + (state.demoMode ? 'Remove demo data' : 'Try demo data') + '</button></div>' +
       '<div class="setting-row"><div><strong>Export data</strong><small>Download a JSON copy of this browser workspace.</small></div><button class="button" data-action="export">Export JSON</button></div>' +
@@ -820,10 +1212,13 @@
   var pages = {
     dashboard: ['Dashboard', renderDashboard],
     tasks: ['My Tasks', renderTasks],
+    search: ['Search', renderSearch],
     calendar: ['Calendar', renderCalendar],
     schedule: ['Daily Schedule', renderSchedule],
     subjects: ['Subjects & Grades', renderSubjects],
     planner: ['Exams & Study Planner', renderPlanner],
+    deadlines: ['Deadlines', renderDeadlines],
+    notifications: ['Notifications', renderNotifications],
     habits: ['Habits', renderHabits],
     progress: ['Progress', renderProgress],
     settings: ['Settings', renderSettings]
@@ -831,6 +1226,7 @@
 
   function render() {
     if (!pages[currentPage]) currentPage = 'dashboard';
+    if (syncReminderQueue()) saveState();
     document.querySelector('#current-section').textContent = pages[currentPage][0];
     document.querySelectorAll('.nav-item[data-page]').forEach(function (button) {
       button.classList.toggle('active', button.dataset.page === currentPage);
@@ -839,8 +1235,26 @@
     });
     document.querySelector('#sidebar-name').textContent = state.preferences.name || 'My Organizer';
     document.querySelector('#sidebar-avatar').textContent = (state.preferences.name || 'M').trim().charAt(0).toUpperCase();
+    document.querySelector('#sidebar').classList.toggle('collapsed', Boolean(state.preferences.sidebarCollapsed));
+    document.querySelector('.main-column').classList.toggle('sidebar-collapsed', Boolean(state.preferences.sidebarCollapsed));
+    updateNotificationBadges();
+    document.querySelector('#global-search').value = globalSearch;
+    document.querySelector('.search-clear').hidden = !globalSearch;
+    document.querySelectorAll('.mobile-bottom-nav [data-page]').forEach(function (button) {
+      button.classList.toggle('active', button.dataset.page === currentPage);
+    });
     applyTheme();
     main.innerHTML = pages[currentPage][1]();
+  }
+
+  function updateNotificationBadges() {
+    var unreadCount = state.notifications.filter(function (item) { return item.status === 'unread' && !item.dismissedAt; }).length;
+    var notificationDot = document.querySelector('#notification-dot');
+    notificationDot.hidden = unreadCount === 0;
+    notificationDot.setAttribute('aria-label', unreadCount + ' unread notifications');
+    var navCount = document.querySelector('#sidebar-notification-count');
+    navCount.hidden = unreadCount === 0;
+    navCount.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
   }
 
   function setPage(page) {
@@ -885,7 +1299,9 @@
   function saveForm(form) {
     var type = form.dataset.form;
     var id = form.dataset.id;
-    var data = Object.fromEntries(new FormData(form).entries());
+    var formData = new FormData(form);
+    var data = Object.fromEntries(formData.entries());
+    if (form.querySelector('[name="reminderOffsets"]')) data.reminderOffsets = formData.getAll('reminderOffsets');
     if (!validateForm(form)) return;
     var record;
     if (type === 'task') {
@@ -1142,11 +1558,60 @@
       case 'collapse-sidebar': {
         var sidebar = document.querySelector('#sidebar');
         var collapsed = sidebar.classList.toggle('collapsed');
+        state.preferences.sidebarCollapsed = collapsed;
         document.querySelector('.main-column').classList.toggle('sidebar-collapsed', collapsed);
         target.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
         target.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+        saveState();
         break;
       }
+      case 'clear-global-search':
+        globalSearch = '';
+        if (currentPage === 'search') render();
+        else document.querySelector('#global-search').value = '';
+        document.querySelector('#global-search').focus();
+        break;
+      case 'open-notifications': setPage('notifications'); break;
+      case 'search-reset':
+        searchFilters = { type: 'all', subject: 'all', priority: 'all', status: 'all', due: 'all' };
+        render();
+        break;
+      case 'deadline-reset':
+        deadlineFilters = { type: 'all', subject: 'all', priority: 'all', status: 'incomplete' };
+        render();
+        break;
+      case 'notifications-dismissed':
+        showDismissedNotifications = !showDismissedNotifications;
+        render();
+        break;
+      case 'notifications-read-all':
+        state.notifications.forEach(function (item) {
+          if (item.status === 'unread' && !item.dismissedAt) {
+            item.status = 'read';
+            item.readAt = new Date().toISOString();
+          }
+        });
+        saveState();
+        render();
+        break;
+      case 'notification-read':
+        record = state.notifications.find(function (item) { return item.id === id; });
+        if (record && record.status === 'unread') {
+          record.status = 'read';
+          record.readAt = new Date().toISOString();
+          saveState();
+          render();
+        }
+        break;
+      case 'notification-dismiss':
+        record = state.notifications.find(function (item) { return item.id === id; });
+        if (record && !record.dismissedAt) {
+          record.status = 'dismissed';
+          record.dismissedAt = new Date().toISOString();
+          saveState();
+          render();
+        }
+        break;
       case 'theme':
         state.preferences.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
         saveState(); render(); break;
@@ -1219,6 +1684,9 @@
           state.preferences.notifications = permission === 'granted';
           saveState(); render();
           toast(permission === 'granted' ? 'Browser notifications enabled.' : 'Notification permission was not granted.');
+        }).catch(function (error) {
+          console.error('Unable to request browser notification permission.', error);
+          toast('Browser notification permission could not be requested. In-app reminders remain available.', true);
         });
         break;
     }
@@ -1226,18 +1694,26 @@
 
   function checkReminders() {
     var now = Date.now();
-    state.tasks.forEach(function (task) {
-      if (!task.reminderAt || task.status === 'Completed' || state.dismissedReminders.includes(task.id)) return;
-      var reminderTime = zonedDateTimeToEpoch(task.reminderAt);
-      if (reminderTime <= now && reminderTime >= now - 60000) {
-        state.dismissedReminders.push(task.id);
-        saveState();
-        toast('Reminder: ' + task.title);
-        if (state.preferences.notifications && 'Notification' in window && Notification.permission === 'granted') {
-          new Notification('My PeOr reminder', { body: task.title });
+    var dueReminders = state.notifications.filter(function (item) {
+      return item.status === 'scheduled' && !item.dismissedAt && item.remindAt <= now;
+    });
+    if (!dueReminders.length) return;
+    dueReminders.forEach(function (item) {
+      item.status = 'unread';
+      item.deliveredAt = new Date(now).toISOString();
+      toast('Reminder: ' + item.title);
+      if (state.preferences.notifications && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification('My PeOr reminder', { body: item.title });
+        } catch (error) {
+          console.error('Unable to display browser reminder.', error);
+          toast('A browser reminder could not be displayed; it is available in the in-app notification center.', true);
         }
       }
     });
+    saveState();
+    updateNotificationBadges();
+    if (currentPage === 'notifications') render();
   }
 
   document.querySelector('#sidebar').addEventListener('click', function (event) {
@@ -1257,6 +1733,21 @@
     if (actionTarget) handleAction(actionTarget.dataset.action, actionTarget);
   });
 
+  document.querySelector('.topbar').addEventListener('input', function (event) {
+    if (event.target.id !== 'global-search') return;
+    globalSearch = event.target.value;
+    currentPage = 'search';
+    render();
+    var input = document.querySelector('#global-search');
+    input.focus();
+    input.setSelectionRange(globalSearch.length, globalSearch.length);
+  });
+
+  document.querySelector('.mobile-bottom-nav').addEventListener('click', function (event) {
+    var button = event.target.closest('[data-page]');
+    if (button) setPage(button.dataset.page);
+  });
+
   main.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page-link]');
     if (pageLink) { setPage(pageLink.dataset.pageLink); return; }
@@ -1273,6 +1764,15 @@
     if (target.name === 'task-category') { taskCategoryFilter = target.value; render(); }
     if (target.name === 'task-priority') { taskPriorityFilter = target.value; render(); }
     if (target.name === 'task-sort') { taskSort = target.value; render(); }
+    if (target.name === 'search-type') { searchFilters.type = target.value; render(); }
+    if (target.name === 'search-subject') { searchFilters.subject = target.value; render(); }
+    if (target.name === 'search-priority') { searchFilters.priority = target.value; render(); }
+    if (target.name === 'search-status') { searchFilters.status = target.value; render(); }
+    if (target.name === 'search-due') { searchFilters.due = target.value; render(); }
+    if (target.name === 'deadline-type') { deadlineFilters.type = target.value; render(); }
+    if (target.name === 'deadline-subject') { deadlineFilters.subject = target.value; render(); }
+    if (target.name === 'deadline-priority') { deadlineFilters.priority = target.value; render(); }
+    if (target.name === 'deadline-status') { deadlineFilters.status = target.value; render(); }
     if (target.name === 'schedule-date' || target.name === 'calendar-date') {
       selectedDate = target.value || todayKey();
       if (target.name === 'calendar-date') {
@@ -1355,8 +1855,13 @@
     calendarDate = parseDate(selectedDate);
     if (!state.timer.remainingMs || state.timer.status === 'idle') state.timer.remainingMs = getPhaseMinutes() * 60000;
     render();
+    checkReminders();
     if (state.timer.status === 'running') runTimer();
-    window.setInterval(checkReminders, 30000);
+    window.setInterval(function () {
+      checkReminders();
+      var focusedControl = document.activeElement && document.activeElement.matches('input, select, textarea');
+      if (currentPage === 'deadlines' && !focusedControl) render();
+    }, 30000);
   }
 
   init();

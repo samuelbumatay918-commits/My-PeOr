@@ -28,6 +28,8 @@
         <button data-page="schedule" class="nav-item"><span class="nav-icon">◷</span>Daily Schedule</button>
         <button data-page="subjects" class="nav-item"><span class="nav-icon">▤</span>Subjects &amp; Grades</button>
         <button data-page="planner" class="nav-item"><span class="nav-icon">◇</span>Exams &amp; Study Planner</button>
+        <button data-page="deadlines" class="nav-item"><span class="nav-icon">⌛</span>Deadlines</button>
+        <button data-page="notifications" class="nav-item"><span class="nav-icon">♧</span>Notifications<span class="nav-count" id="sidebar-notification-count" hidden></span></button>
         <button data-page="habits" class="nav-item"><span class="nav-icon">✓</span>Habits</button>
         <button data-page="progress" class="nav-item"><span class="nav-icon">↗</span>Progress</button>
       </nav>
@@ -41,8 +43,14 @@
       <header class="topbar">
         <button class="mobile-menu icon-button" data-action="menu" aria-label="Open menu">☰</button>
         <div class="breadcrumb"><span>My PeOr</span><span class="crumb-divider">/</span><strong id="current-section">Dashboard</strong></div>
+        <div class="global-search-wrap">
+          <span aria-hidden="true">⌕</span>
+          <input type="search" id="global-search" placeholder="Search everything…" aria-label="Search tasks, events, and subjects" autocomplete="off">
+          <button class="search-clear icon-button" data-action="clear-global-search" aria-label="Clear search" hidden>×</button>
+        </div>
         <div class="top-actions">
           <span class="sync-badge"><i></i> Local demo</span>
+          <button class="icon-button notification-button" data-action="open-notifications" aria-label="Open notifications" title="Notifications">♧<span class="notification-dot" id="notification-dot" hidden></span></button>
           <button class="icon-button theme-toggle" data-action="theme" aria-label="Toggle color theme" title="Toggle theme">☾</button>
           <button class="button primary add-task-global" data-action="add-task"><span>＋</span> Add Task</button>
         </div>
@@ -52,6 +60,13 @@
       <footer class="app-footer"><span>Your day. Your goals. Your progress.</span><span>Data stays in this browser on this device.</span></footer>
     </div>
   </div>
+
+  <nav class="mobile-bottom-nav" aria-label="Quick navigation">
+    <button data-page="dashboard" class="active"><span>⌂</span>Today</button>
+    <button data-page="tasks"><span>☷</span>Tasks</button>
+    <button data-page="calendar"><span>▦</span>Calendar</button>
+    <button data-page="deadlines"><span>⌛</span>Deadlines</button>
+  </nav>
 
   <div class="modal-backdrop" id="modal" hidden>
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
