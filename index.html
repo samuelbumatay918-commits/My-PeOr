@@ -13,6 +13,26 @@
   <script src="script.js" defer></script>
 </head>
 <body>
+  <section class="welcome-screen" id="welcome-screen" role="dialog" aria-modal="true" aria-labelledby="welcome-title" aria-describedby="welcome-message" hidden>
+    <div class="welcome-card">
+      <div class="welcome-mascot" aria-hidden="true">
+        <span class="welcome-sparkle welcome-sparkle-one">✦</span>
+        <span class="welcome-sparkle welcome-sparkle-two">✧</span>
+        <div class="welcome-notebook">
+          <span class="notebook-binding"></span>
+          <span class="notebook-face"><i></i><i></i></span>
+          <span class="notebook-smile"></span>
+          <span class="notebook-lines"></span>
+        </div>
+        <span class="welcome-wave">👋</span>
+      </div>
+      <p class="welcome-eyebrow">A little space for big things</p>
+      <h1 id="welcome-title"></h1>
+      <p class="welcome-message" id="welcome-message"></p>
+      <button class="button primary welcome-continue" id="welcome-continue" type="button">Let’s Get Started! <span aria-hidden="true">→</span></button>
+    </div>
+  </section>
+
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="#dashboard" aria-label="My PeOr dashboard">

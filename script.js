@@ -3,6 +3,9 @@
 
   var STORAGE_KEY = 'mypeor.local.v1';
   var LEGACY_STORAGE_KEY = STORAGE_KEY;
+  var WELCOME_VISITED_KEY = 'mypeor.welcome.visited';
+  var WELCOME_SESSION_KEY = 'mypeor.welcome.shown';
+  var WELCOME_DURATION = 2600;
   var DATABASE_VERSION = 1;
   var DATABASE_NAME = 'mypeor.local.v1.' + (location.pathname.split('/').filter(Boolean)[0] || 'root').replace(/[^a-z0-9_-]/gi, '_');
   var STATE_KEY = 'current';
@@ -77,8 +80,11 @@
   var settingsSaveTimer = null;
   var storageStatus = 'loading';
   var storageErrorMessage = '';
+  var welcomeTimeout = null;
+  var appReady = false;
 
   var main = document.querySelector('#main-content');
+  var welcomeScreen = document.querySelector('#welcome-screen');
   var modal = document.querySelector('#modal');
   var modalBody = document.querySelector('#modal-body');
   var modalTitle = document.querySelector('#modal-title');
@@ -1749,6 +1755,68 @@
     document.querySelector('.theme-toggle').textContent = theme === 'dark' ? '☀' : '☾';
   }
 
+  function showWelcome() {
+    var returningGreetings = [
+      'Ready na ba tayo maging productive today?',
+      'Good to see you again! Let’s organize your day.',
+      'Kaya natin ’to! One task at a time. 💪'
+    ];
+    var isFirstVisit = true;
+    var alreadyShown = false;
+
+    try {
+      isFirstVisit = localStorage.getItem(WELCOME_VISITED_KEY) !== 'true';
+    } catch (error) {
+      console.warn('Welcome visit history could not be read from localStorage.', error);
+    }
+    try {
+      alreadyShown = sessionStorage.getItem(WELCOME_SESSION_KEY) === 'true';
+    } catch (error) {
+      console.warn('Welcome session history could not be read from sessionStorage.', error);
+    }
+    if (alreadyShown) return false;
+
+    try {
+      localStorage.setItem(WELCOME_VISITED_KEY, 'true');
+    } catch (error) {
+      console.warn('Welcome visit history could not be saved to localStorage.', error);
+    }
+    try {
+      sessionStorage.setItem(WELCOME_SESSION_KEY, 'true');
+    } catch (error) {
+      console.warn('Welcome session history could not be saved to sessionStorage.', error);
+    }
+
+    document.querySelector('#welcome-title').textContent = isFirstVisit
+      ? 'Welcome to My PeOr! 👋 Kamusta?'
+      : 'Welcome back! 👋 Kamusta ka na?';
+    document.querySelector('#welcome-message').textContent = isFirstVisit
+      ? 'Your cozy little corner to plan, learn, and grow.'
+      : returningGreetings[Math.floor(Math.random() * returningGreetings.length)];
+    applyTheme();
+    welcomeScreen.hidden = false;
+    document.querySelector('.app-shell').inert = true;
+    document.querySelector('.mobile-bottom-nav').inert = true;
+    document.querySelector('#welcome-continue').focus();
+    return true;
+  }
+
+  function dismissWelcome() {
+    if (welcomeScreen.hidden || welcomeScreen.classList.contains('is-leaving')) return;
+    if (welcomeTimeout !== null) window.clearTimeout(welcomeTimeout);
+    welcomeScreen.classList.add('is-leaving');
+    var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.setTimeout(function () {
+      welcomeScreen.hidden = true;
+      welcomeScreen.classList.remove('is-leaving');
+      if (appReady) {
+        document.querySelector('.app-shell').inert = false;
+        document.querySelector('.mobile-bottom-nav').inert = false;
+        main.focus({ preventScroll: true });
+      }
+    }, reducedMotion ? 0 : 360);
+  }
+
   var pages = {
     dashboard: ['Dashboard', renderDashboard],
     tasks: ['My Tasks', renderTasks],
@@ -2840,7 +2908,10 @@
 
   document.addEventListener('keydown', function (event) {
     if (event.key === 'Escape' && !modal.hidden) closeModal();
+    if (event.key === 'Escape' && !welcomeScreen.hidden) dismissWelcome();
   });
+
+  document.querySelector('#welcome-continue').addEventListener('click', dismissWelcome);
 
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && state.timer.status === 'running') {
@@ -2858,6 +2929,7 @@
   async function init() {
     document.querySelector('.app-shell').inert = true;
     document.querySelector('.mobile-bottom-nav').inert = true;
+    var showWelcomeScreen = showWelcome();
     setStorageStatus('loading');
     await loadState();
     document.querySelector('.app-shell').inert = false;
@@ -2868,6 +2940,14 @@
     render();
     checkReminders();
     if (state.timer.status === 'running') runTimer();
+    appReady = true;
+    if (showWelcomeScreen && !welcomeScreen.hidden) {
+      welcomeTimeout = window.setTimeout(dismissWelcome, WELCOME_DURATION);
+    } else {
+      document.querySelector('.app-shell').inert = false;
+      document.querySelector('.mobile-bottom-nav').inert = false;
+      if (showWelcomeScreen) main.focus({ preventScroll: true });
+    }
     window.setInterval(function () {
       checkReminders();
       var focusedControl = document.activeElement && document.activeElement.matches('input, select, textarea');
