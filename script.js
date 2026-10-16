@@ -1360,6 +1360,17 @@
       '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Local data &amp; privacy</h2></div><div class="notice info"><strong>No account required.</strong> My PeOr saves your organizer data in IndexedDB in this browser profile. Data is not sent to a server, is not synchronized across devices, and may be cleared if browser site data is removed.</div></section>';
   }
 
+  function renderAbout() {
+    return pageHeading('About My PeOr', 'A simple space to plan your day and make progress toward your goals.', '') +
+      '<section class="card about-creator-card"><p class="eyebrow">About the Creator</p><h2>Samuel Bumatay</h2>' +
+      '<p>Hi! I\'m Samuel Bumatay, the creator of My PeOr. I created this website to help students and people who want to become more organized, manage their time wisely, and stay on track with their goals.</p>' +
+      '<p>My goal is to make everyday planning easier by providing a simple and accessible space where people can organize their tasks, track their deadlines, plan their schedules, and improve their productivity.</p>' +
+      '<p>I believe that small steps, when done consistently, can lead to meaningful progress. Through My PeOr, I hope to help people become more organized, productive, and motivated to achieve their goals.</p>' +
+      '<a class="button primary about-facebook" href="https://www.facebook.com/samuel.bumatay.2024" target="_blank" rel="noopener noreferrer">' +
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.4 21v-8h2.7l.4-3.1h-3.1v-2c0-.9.3-1.5 1.6-1.5h1.7V3.6c-.3 0-1.3-.1-2.5-.1-2.5 0-4.2 1.5-4.2 4.3v2.1H7.2V13H10v8h3.4Z"/></svg>' +
+      '<span>Visit My Facebook Profile</span><span aria-hidden="true">↗</span></a></section>';
+  }
+
   function settingsInput(label, name, value, type, hint, min) {
     return '<div class="form-field"><label for="setting-' + name + '">' + label + '</label><input id="setting-' + name + '" name="' + name + '" type="' + type + '" value="' + escapeHtml(value) + '"' + (min ? ' min="' + min + '"' : '') + '>' + (hint ? '<small class="form-hint">' + hint + '</small>' : '') + '</div>';
   }
@@ -1418,7 +1429,8 @@
     notifications: ['Notifications', renderNotifications],
     habits: ['Habits', renderHabits],
     progress: ['Progress', renderProgress],
-    settings: ['Settings', renderSettings]
+    settings: ['Settings', renderSettings],
+    about: ['About My PeOr', renderAbout]
   };
 
   function render() {

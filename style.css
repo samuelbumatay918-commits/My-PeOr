@@ -124,6 +124,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .progress-fill { height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 
 .card { min-width: 0; padding: 19px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.about-creator-card { width: min(760px, 100%); }
+.about-creator-card h2 { margin: 0 0 16px; font-size: 21px; letter-spacing: -.5px; }
+.about-creator-card p:not(.eyebrow) { max-width: 68ch; margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.about-facebook { margin-top: 8px; text-decoration: none; }
+.about-facebook svg { width: 16px; height: 16px; fill: currentColor; }
+.about-facebook span:last-child { margin-left: 4px; font-size: 14px; }
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
 .card-title-row h2, .card-title-row h3 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.2px; }
 .card-title-row .muted { color: var(--muted); font-size: 11px; }
