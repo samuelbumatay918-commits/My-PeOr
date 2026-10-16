@@ -59,6 +59,13 @@
   var lessonSearch = '';
   var lessonStatusFilter = 'all';
   var lessonSort = 'order';
+  var lessonIntroPending = false;
+  var dashboardIntroPlayed = false;
+  var taskCompletionPulseId = '';
+  var taskCompletionCelebration = false;
+  var timerPhaseChanged = false;
+  var progressSignature = '';
+  var progressAnimationPending = false;
   var selectedDate = todayKey();
   var progressRange = 'week';
   var customRange = { start: todayKey(), end: todayKey() };
@@ -628,13 +635,13 @@
     return 'priority-' + String(priority || 'Medium').toLowerCase();
   }
 
-  function toast(message, isError) {
+  function toast(message, isError, celebration) {
     var region = document.querySelector('#toast-region');
     var node = document.createElement('div');
-    node.className = 'toast' + (isError ? ' error' : '');
+    node.className = 'toast' + (isError ? ' error' : '') + (celebration ? ' celebration' : '');
     node.textContent = message;
     region.appendChild(node);
-    window.setTimeout(function () { node.remove(); }, 3600);
+    window.setTimeout(function () { node.remove(); }, celebration ? 2400 : 2800);
   }
 
   function openModal(title, content, focusSelector) {
@@ -828,7 +835,7 @@
   function taskMarkup(task, withActions) {
     var status = statusForTask(task);
     var subject = task.subjectId ? subjectName(task.subjectId) : '';
-    return '<div class="task-row"><input class="check" type="checkbox" data-action="toggle-task" data-id="' + escapeHtml(task.id) + '" aria-label="Mark ' + escapeHtml(task.title) + ' completed"' + (task.status === 'Completed' ? ' checked' : '') + '>' +
+    return '<div class="task-row' + (task.status === 'Completed' && task.id === taskCompletionPulseId ? ' task-completion-pulse' : '') + '"><input class="check' + (task.status === 'Completed' && task.id === taskCompletionPulseId ? ' just-completed' : '') + '" type="checkbox" data-action="toggle-task" data-id="' + escapeHtml(task.id) + '" aria-label="Mark ' + escapeHtml(task.title) + ' completed"' + (task.status === 'Completed' ? ' checked' : '') + '>' +
       '<div class="task-main"><button class="text-button task-title' + (task.status === 'Completed' ? ' completed' : '') + '" data-action="edit-task" data-id="' + escapeHtml(task.id) + '">' + escapeHtml(task.title) + '</button>' +
       '<div class="task-meta"><span class="priority ' + priorityClass(task.priority) + '">' + escapeHtml(task.priority || 'Medium') + '</span>' +
       (task.dueTime ? '<span>' + escapeHtml(timeLabel(task.dueTime)) + '</span>' : '') +
@@ -840,7 +847,10 @@
   }
 
   function emptyState(title, text, action, label) {
-    return '<div class="empty-state"><strong>' + escapeHtml(title) + '</strong>' + escapeHtml(text) + (action ? '<div style="margin-top:12px"><button class="button subtle" data-action="' + action + '">' + escapeHtml(label || 'Get started') + '</button></div>' : '') + '</div>';
+    var illustration = title === 'No subjects yet.' ? ' empty-subjects' :
+      title.indexOf('No lessons') === 0 ? ' empty-lessons' :
+        title === 'You’re all caught up.' ? ' empty-tasks' : '';
+    return '<div class="empty-state' + illustration + '"><strong>' + escapeHtml(title) + '</strong>' + escapeHtml(text) + (action ? '<div style="margin-top:12px"><button class="button subtle" data-action="' + action + '">' + escapeHtml(label || 'Get started') + '</button></div>' : '') + '</div>';
   }
 
   function dayTasks(date) {
@@ -893,6 +903,8 @@
     }).concat(state.classSchedules.filter(function (item) { return classForDay(item, todayDay); }).map(function (item) {
       return { id: item.id, kind: 'class', title: item.subjectName, startTime: item.startTime, endTime: item.endTime, subject: item.subjectCode || '', location: item.location || '', action: 'edit-class' };
     })).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); }).slice(0, 6);
+    var currentTime = timeInConfiguredTimezone(new Date());
+    var nextClassId = schedule.filter(function (item) { return item.kind === 'class' && item.startTime > currentTime; }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); }).map(function (item) { return item.id; })[0] || '';
     var highPriority = state.tasks.filter(function (task) {
       return task.status !== 'Completed' && (task.priority === 'High' || task.priority === 'Urgent');
     }).sort(function (a, b) {
@@ -925,11 +937,11 @@
       summaryCard('Coming Soon', String(upcoming), 'Deadlines in the next 7 days', '⌛') + '</section>' +
       '<section class="summary-strip"><span>Study time today <strong>' + formatMinutes(focusToday) + '</strong></span><span>Habits today <strong>' + doneHabits + ' / ' + habits.length + '</strong></span></section>' +
       '<div class="dashboard-grid"><div class="stack">' +
-      '<section class="card"><div class="card-title-row"><h2>Tasks due today</h2><button class="text-button" data-page-link="tasks">View all tasks</button></div>' +
+      '<section class="card' + (taskCompletionCelebration ? ' task-day-complete' : '') + '"><div class="card-title-row"><h2>Tasks due today</h2><button class="text-button" data-page-link="tasks">View all tasks</button></div>' +
       (todays.length ? '<div class="task-list">' + todays.sort(function (a, b) { return (a.dueTime || '').localeCompare(b.dueTime || ''); }).map(function (task) { return taskMarkup(task, false); }).join('') + '</div>' : emptyState('You’re all caught up.', 'Add a task to get started.', 'add-task', 'Add a task')) + '</section>' +
       (overdueTasks.length ? '<section class="card"><div class="card-title-row"><h2>Overdue tasks</h2><button class="text-button" data-page-link="deadlines">Review deadlines</button></div><div class="task-list">' + overdueTasks.slice(0, 4).map(function (task) { return taskMarkup(task, false); }).join('') + '</div></section>' : '') +
       '<section class="card"><div class="card-title-row"><h2>Today’s classes &amp; schedule</h2><button class="text-button" data-page-link="schedule">Open schedule</button></div>' +
-      (schedule.length ? schedule.map(function (item) { return '<button class="schedule-row text-button w-100" data-action="' + item.action + '" data-id="' + escapeHtml(item.id) + '"><span class="summary-icon">' + (item.kind === 'class' ? '▤' : '◷') + '</span><div class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(timeLabel(item.startTime)) + ' – ' + escapeHtml(timeLabel(item.endTime)) + (item.subject ? ' · ' + escapeHtml(item.subject) : '') + (item.location ? ' · ' + escapeHtml(item.location) : '') + '</small></div></button>'; }).join('') : emptyState('No classes or activities planned for today.', 'Add a recurring class or a dated schedule block.', 'add-class', 'Add Class Schedule')) + '</section></div>' +
+      (schedule.length ? schedule.map(function (item) { return '<button class="schedule-row text-button w-100' + (item.id === nextClassId ? ' next-class-preview' : '') + '" data-action="' + item.action + '" data-id="' + escapeHtml(item.id) + '"><span class="summary-icon">' + (item.kind === 'class' ? '▤' : '◷') + '</span><div class="row-info"><strong>' + escapeHtml(item.title) + (item.id === nextClassId ? ' <span class="next-class-label">Next</span>' : '') + '</strong><small>' + escapeHtml(timeLabel(item.startTime)) + ' – ' + escapeHtml(timeLabel(item.endTime)) + (item.subject ? ' · ' + escapeHtml(item.subject) : '') + (item.location ? ' · ' + escapeHtml(item.location) : '') + '</small></div></button>'; }).join('') : emptyState('No classes or activities planned for today.', 'Add a recurring class or a dated schedule block.', 'add-class', 'Add Class Schedule')) + '</section></div>' +
       '<div class="stack"><section class="card"><div class="card-title-row"><h2>Upcoming deadlines</h2><span class="muted">Tasks &amp; exams</span></div>' +
       (deadlines.length ? deadlines.map(deadlineDashboardRow).join('') : emptyState('No upcoming deadlines.', 'You have a clear week ahead.')) +
       (upcomingEvents.length ? '<div class="card-title-row" style="margin-top:15px"><h3>Upcoming events</h3><button class="text-button" data-page-link="calendar">Calendar</button></div>' + upcomingEvents.map(deadlineDashboardRow).join('') : '') + '</section>' +
@@ -1305,6 +1317,12 @@
         Number(item.endTime.slice(0, 2)) * 60 + Number(item.endTime.slice(3, 5)) > rangeStart &&
         Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5)) < rangeEnd;
     }).sort(function (a, b) { return a.startTime.localeCompare(b.startTime); });
+    var currentTime = timeInConfiguredTimezone(new Date());
+    var nowMinutes = Number(currentTime.slice(0, 2)) * 60 + Number(currentTime.slice(3, 5));
+    var isCurrentWeek = timetableWeekOffset === 0;
+    var upcomingClassId = isCurrentWeek && day === parseDate(todayKey()).getDay()
+      ? items.filter(function (item) { return Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5)) > nowMinutes; }).map(function (item) { return item.id; })[0] || ''
+      : '';
     var lanes = [];
     items.forEach(function (item) {
       var start = Number(item.startTime.slice(0, 2)) * 60 + Number(item.startTime.slice(3, 5));
@@ -1323,13 +1341,13 @@
         var overlaps = items.some(function (other) { return other.id !== item.id && item.startTime < other.endTime && other.startTime < item.endTime; });
         var top = Math.max(0, (start - rangeStart) / 60 * 68);
         var blockHeight = Math.max(36, (Math.min(end, rangeEnd) - Math.max(start, rangeStart)) / 60 * 68 - 3);
-        return '<article class="timetable-class' + (overlaps ? ' has-overlap' : '') + '" title="' + escapeHtml([item.instructor, item.notes].filter(Boolean).join(' · ')) + '" style="top:' + top + 'px;height:' + blockHeight + 'px;left:calc(' + (lanes.findIndex(function (lane) { return lane.some(function (entry) { return entry.item.id === item.id; }); }) * 100 / laneCount) + '% + 2px);width:calc(' + (100 / laneCount) + '% - 4px);--class-color:' + escapeHtml(/^#[0-9a-f]{6}$/i.test(item.color || '') ? item.color : '#5368d8') + '" data-action="edit-class" data-id="' + escapeHtml(item.id) + '">' +
+        return '<article class="timetable-class' + (overlaps ? ' has-overlap' : '') + (item.id === upcomingClassId ? ' next-class' : '') + '" title="' + escapeHtml([item.instructor, item.notes].filter(Boolean).join(' · ')) + '" style="top:' + top + 'px;height:' + blockHeight + 'px;left:calc(' + (lanes.findIndex(function (lane) { return lane.some(function (entry) { return entry.item.id === item.id; }); }) * 100 / laneCount) + '% + 2px);width:calc(' + (100 / laneCount) + '% - 4px);--class-color:' + escapeHtml(/^#[0-9a-f]{6}$/i.test(item.color || '') ? item.color : '#5368d8') + '" data-action="edit-class" data-id="' + escapeHtml(item.id) + '">' +
           '<strong>' + escapeHtml(item.subjectName) + '</strong><small>' + escapeHtml(timeLabel(item.startTime) + '–' + timeLabel(item.endTime)) + '</small>' +
           (item.subjectCode ? '<small>' + escapeHtml(item.subjectCode) + '</small>' : '') +
           (item.location ? '<small>' + escapeHtml(item.location) + '</small>' : '') +
           (item.instructor ? '<small>' + escapeHtml(item.instructor) + '</small>' : '') +
           (overlaps ? '<span class="class-overlap-warning">Overlaps</span>' : '') +
-          '<span class="class-actions"><button data-action="edit-class" data-id="' + escapeHtml(item.id) + '" aria-label="Edit class schedule">✎</button><button data-action="delete-class" data-id="' + escapeHtml(item.id) + '" aria-label="Delete class schedule">×</button></span></article>';
+          (item.id === upcomingClassId ? '<span class="next-class-label">Next</span>' : '') + '<span class="class-actions"><button data-action="edit-class" data-id="' + escapeHtml(item.id) + '" aria-label="Edit class schedule">✎</button><button data-action="delete-class" data-id="' + escapeHtml(item.id) + '" aria-label="Delete class schedule">×</button></span></article>';
       }).join('') + '</div></div>';
   }
 
@@ -1491,7 +1509,7 @@
       var cards = subjects.map(function (item) {
         var counts = lessonFolderCounts(item.id);
         var color = /^#[0-9a-f]{6}$/i.test(item.color || '') ? item.color : '#5368d8';
-        return '<article class="card lesson-folder-card"><div class="lesson-folder-top"><button class="lesson-folder-icon" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Open ' + escapeHtml(item.name) + '" style="--folder-color:' + color + '">' + escapeHtml(item.icon || '▧') + '</button><div class="table-actions"><button class="icon-button" data-action="edit-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Edit ' + escapeHtml(item.name) + '">✎</button><button class="icon-button" data-action="delete-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Delete ' + escapeHtml(item.name) + '">×</button></div></div><button class="lesson-folder-name text-button" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.name) + '</button><p class="small-note">' + escapeHtml([item.code, item.description].filter(Boolean).join(' · ') || 'Open this folder to add lessons and files.') + '</p><div class="lesson-folder-counts"><span>' + counts.lessons + ' ' + (counts.lessons === 1 ? 'lesson' : 'lessons') + '</span><span>' + counts.files + ' ' + (counts.files === 1 ? 'file' : 'files') + '</span></div></article>';
+        return '<article class="card lesson-folder-card" style="--lesson-enter-delay:' + Math.min(subjects.indexOf(item), 5) * 45 + 'ms"><div class="lesson-folder-top"><button class="lesson-folder-icon" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Open ' + escapeHtml(item.name) + '" style="--folder-color:' + color + '">' + escapeHtml(item.icon || '▧') + '</button><div class="table-actions"><button class="icon-button" data-action="edit-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Edit ' + escapeHtml(item.name) + '">✎</button><button class="icon-button" data-action="delete-subject" data-id="' + escapeHtml(item.id) + '" aria-label="Delete ' + escapeHtml(item.name) + '">×</button></div></div><button class="lesson-folder-name text-button" data-action="lesson-open-subject" data-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.name) + '</button><p class="small-note">' + escapeHtml([item.code, item.description].filter(Boolean).join(' · ') || 'Open this folder to add lessons and files.') + '</p><div class="lesson-folder-counts"><span>' + counts.lessons + ' ' + (counts.lessons === 1 ? 'lesson' : 'lessons') + '</span><span>' + counts.files + ' ' + (counts.files === 1 ? 'file' : 'files') + '</span></div></article>';
       }).join('');
       return pageHeading('Lesson Organizer', 'Keep your lesson notes and learning materials together by subject.', '<button class="button primary" data-action="add-subject">＋ Add Subject</button>') +
         '<div class="notice info lesson-storage-notice">Lessons and files are saved locally in this browser (15 MB per file, 50 MB total). Clearing browser site data may permanently remove them. Export a backup in Settings to keep a copy.</div>' +
@@ -1513,7 +1531,7 @@
     var lessonCards = lessons.map(function (item, index) {
       var fileRows = state.lessonAttachments.filter(function (file) { return file.lessonId === item.id; }).map(function (file) { return lessonAttachmentMarkup(file, false); }).join('');
       var reorderDisabled = lessonSort !== 'order' || lessonStatusFilter !== 'all' || Boolean(lessonSearch);
-      return '<article class="card lesson-card"><div class="lesson-card-heading"><span class="lesson-number">' + escapeHtml(item.lessonNumber || index + 1) + '</span><div class="lesson-card-title"><h3>' + escapeHtml(item.title) + '</h3><p class="small-note">' + escapeHtml([item.topic, item.date ? dateLabel(item.date) : ''].filter(Boolean).join(' · ') || 'Lesson details') + '</p></div><span class="status-pill ' + (item.reviewStatus === 'Reviewed' ? 'status-completed' : 'status-upcoming') + '">' + escapeHtml(item.reviewStatus || 'Not Reviewed') + '</span></div>' +
+      return '<article class="card lesson-card" style="--lesson-enter-delay:' + Math.min(index, 5) * 45 + 'ms"><div class="lesson-card-heading"><span class="lesson-number">' + escapeHtml(item.lessonNumber || index + 1) + '</span><div class="lesson-card-title"><h3>' + escapeHtml(item.title) + '</h3><p class="small-note">' + escapeHtml([item.topic, item.date ? dateLabel(item.date) : ''].filter(Boolean).join(' · ') || 'Lesson details') + '</p></div><span class="status-pill ' + (item.reviewStatus === 'Reviewed' ? 'status-completed' : 'status-upcoming') + '">' + escapeHtml(item.reviewStatus || 'Not Reviewed') + '</span></div>' +
         (item.notes ? '<div class="lesson-notes">' + lessonNotesMarkup(item.notes) + '</div>' : '') +
         (fileRows ? '<div class="lesson-files">' + fileRows + '</div>' : '') +
         '<div class="lesson-card-actions"><button class="button" data-action="lesson-upload-files" data-subject="' + escapeHtml(subject.id) + '" data-lesson="' + escapeHtml(item.id) + '">＋ Upload Files</button><button class="button" data-action="lesson-toggle-reviewed" data-id="' + escapeHtml(item.id) + '">' + (item.reviewStatus === 'Reviewed' ? 'Mark not reviewed' : 'Mark reviewed') + '</button><button class="icon-button" data-action="lesson-move" data-id="' + escapeHtml(item.id) + '" data-direction="up" aria-label="Move lesson up" ' + (reorderDisabled || index === 0 ? 'disabled' : '') + '>↑</button><button class="icon-button" data-action="lesson-move" data-id="' + escapeHtml(item.id) + '" data-direction="down" aria-label="Move lesson down" ' + (reorderDisabled || index === lessons.length - 1 ? 'disabled' : '') + '>↓</button><button class="icon-button" data-action="lesson-edit" data-id="' + escapeHtml(item.id) + '" aria-label="Edit lesson">✎</button><button class="icon-button" data-action="lesson-delete" data-id="' + escapeHtml(item.id) + '" aria-label="Delete lesson">×</button></div></article>';
@@ -1535,7 +1553,7 @@
     var label = timer.phase === 'focus' ? 'Focus session' : timer.phase === 'shortBreak' ? 'Short break' : 'Long break';
     var min = Math.floor(remaining / 60000).toString().padStart(2, '0');
     var sec = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');
-    return '<div class="timer-card' + (compact ? ' compact' : '') + '"><div class="timer-ring" style="--timer-progress:' + progress + '%"><div class="timer-inner"><span class="timer-label">' + label + '</span><strong class="timer-time">' + min + ':' + sec + '</strong></div></div>' +
+    return '<div class="timer-card' + (compact ? ' compact' : '') + (timerPhaseChanged ? ' timer-phase-change' : '') + '"><div class="timer-ring" style="--timer-progress:' + progress + '%"><div class="timer-inner"><span class="timer-label">' + label + '</span><strong class="timer-time">' + min + ':' + sec + '</strong></div></div>' +
       (timer.recoveredExpired ? '<p class="small-note danger-text">The timer expired while the page was away. It was not counted as a completed session.</p>' : '') +
       '<p class="small-note">Completed focus sessions: ' + timer.focusCount + '</p><div class="timer-actions">' +
       (timer.status === 'running' ? '<button class="button" data-action="timer-pause">Pause</button>' : '<button class="button primary" data-action="timer-start">' + (timer.status === 'paused' ? 'Resume' : 'Start') + '</button>') +
@@ -1625,6 +1643,13 @@
       var avg = items.reduce(function (sum, item) { return sum + item.score / item.maximum * 100; }, 0) / items.length;
       return '<div class="bar-item"><span>' + escapeHtml(subject.name) + '</span><span class="progress-track"><span class="progress-fill" style="display:block;width:' + avg + '%"></span></span><span>' + avg.toFixed(0) + '%</span></div>';
     }).filter(Boolean).join('');
+    var currentProgressSignature = JSON.stringify({
+      from: from, to: to, completed: tasksDone.map(function (task) { return [task.id, task.completedAt]; }),
+      remaining: remaining, overdue: overdue, study: study, logs: logs, habitPossible: habitPossible,
+      assessments: subjectSummary
+    });
+    progressAnimationPending = currentProgressSignature !== progressSignature;
+    progressSignature = currentProgressSignature;
     return pageHeading('Progress', 'A clear view of activity you have actually recorded.', '<div class="segmented"><button data-action="progress-range" data-value="week" class="' + (progressRange === 'week' ? 'selected' : '') + '">This week</button><button data-action="progress-range" data-value="month" class="' + (progressRange === 'month' ? 'selected' : '') + '">This month</button><button data-action="progress-range" data-value="custom" class="' + (progressRange === 'custom' ? 'selected' : '') + '">Custom</button></div>') +
       (progressRange === 'custom' ? '<div class="toolbar"><label>From <input type="date" name="range-start" value="' + escapeHtml(customRange.start) + '"></label><label>To <input type="date" name="range-end" value="' + escapeHtml(customRange.end) + '"></label><button class="button" data-action="apply-range">Apply</button></div>' : '') +
       '<section class="summary-grid">' + summaryCard('Tasks completed', String(tasksDone.length), 'Completed in selected range', '✓') + summaryCard('Tasks remaining', String(remaining), 'Due in selected range', '☷') + summaryCard('Overdue tasks', String(overdue), 'Currently incomplete', '◷') + summaryCard('Study time', formatMinutes(study), 'Recorded completed study time', '◎') + '</section>' +
@@ -1759,7 +1784,21 @@
       button.classList.toggle('active', button.dataset.page === currentPage);
     });
     applyTheme();
+    main.dataset.page = currentPage;
     main.innerHTML = pages[currentPage][1]();
+    var showDashboardIntro = currentPage === 'dashboard' && !dashboardIntroPlayed;
+    main.classList.toggle('dashboard-first', showDashboardIntro);
+    if (showDashboardIntro) dashboardIntroPlayed = true;
+    main.classList.toggle('lesson-entry', currentPage === 'lessons' && lessonIntroPending);
+    if (currentPage === 'lessons' && lessonIntroPending) {
+      lessonIntroPending = false;
+      window.setTimeout(function () { main.classList.remove('lesson-entry'); }, 500);
+    }
+    main.classList.toggle('progress-updated', currentPage === 'progress' && progressAnimationPending);
+    progressAnimationPending = false;
+    timerPhaseChanged = false;
+    taskCompletionPulseId = '';
+    taskCompletionCelebration = false;
   }
 
   function updateNotificationBadges() {
@@ -1779,6 +1818,7 @@
     else if (page === 'subjects') { academicsTab = 'subjects'; page = 'academics'; }
     else if (page === 'habits') page = 'progress';
     if (!pages[page]) return;
+    if (page === 'lessons') lessonIntroPending = true;
     currentPage = page;
     render();
     document.querySelector('#sidebar').classList.remove('mobile-open');
@@ -1963,8 +2003,21 @@
     if (!task) return;
     task.status = checked ? 'Completed' : 'To Do';
     task.completedAt = checked ? new Date().toISOString() : '';
+    if (checked) {
+      taskCompletionPulseId = id;
+      var todayTasks = dayTasks(todayKey());
+      taskCompletionCelebration = todayTasks.length > 0 && todayTasks.every(function (item) { return item.status === 'Completed'; });
+    } else {
+      taskCompletionPulseId = '';
+      taskCompletionCelebration = false;
+    }
+    var allTasksDone = taskCompletionCelebration;
     saveState();
     render();
+    if (checked) {
+      toast('Nice work!');
+      if (allTasksDone) toast('You completed all of today’s tasks!', false, true);
+    }
   }
   function toggleHabit(id, date, checked) {
     var index = state.habitLogs.findIndex(function (log) { return log.habitId === id && log.date === date; });
@@ -2026,6 +2079,7 @@
     state.timer.endAt = null;
     state.timer.remainingMs = getPhaseMinutes() * 60000;
     state.timer.recoveredExpired = false;
+    timerPhaseChanged = true;
     saveState();
     render();
   }
@@ -2045,6 +2099,7 @@
     timer.status = 'idle';
     timer.endAt = null;
     timer.remainingMs = getPhaseMinutes() * 60000;
+    timerPhaseChanged = true;
     saveState();
     render();
     if (state.preferences.notifications && 'Notification' in window && Notification.permission === 'granted') {
@@ -2226,6 +2281,38 @@
     bmp: 'image/bmp'
   };
 
+  function setLessonUploadStatus(status, message, percent) {
+    var statusNode = document.querySelector('#lesson-upload-status');
+    var progressNode = statusNode.querySelector('progress');
+    statusNode.hidden = false;
+    statusNode.className = 'lesson-upload-status is-' + status;
+    statusNode.querySelector('.lesson-upload-icon').textContent = status === 'saved' ? '✓' : status === 'error' ? '!' : '↥';
+    statusNode.querySelector('.lesson-upload-label').textContent = message;
+    if (status === 'saving') progressNode.removeAttribute('value');
+    else {
+      progressNode.setAttribute('value', String(Math.max(0, Math.min(100, percent || 0))));
+      progressNode.setAttribute('aria-valuetext', Math.round(percent || 0) + '% read');
+    }
+  }
+
+  function readLessonFile(file, progress) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      var extension = String(file.name).split('.').pop().toLowerCase();
+      var mimeType = file.type || LESSON_FILE_TYPES[extension] || '';
+      reader.onprogress = function (event) {
+        if (event.lengthComputable) progress(event.loaded);
+      };
+      reader.onload = function () {
+        progress(file.size);
+        resolve(new Blob([reader.result], { type: mimeType }));
+      };
+      reader.onerror = function () { reject(reader.error || new Error('The browser could not read ' + file.name + '.')); };
+      reader.onabort = function () { reject(new Error('Reading ' + file.name + ' was cancelled.')); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
   async function saveLessonFiles(files, subjectId, lessonId, replaceId) {
     var subject = getRecord('subjects', subjectId);
     if (!subject) { toast('Choose an existing subject before uploading files.', true); return; }
@@ -2263,8 +2350,26 @@
       });
     } catch (error) { toast(error.message, true); return; }
     if (replaceId && !window.confirm('Replace "' + oldFile.name + '" with "' + selected[0].name + '"?')) return;
+    var totalUploadSize = selected.reduce(function (sum, file) { return sum + file.size; }, 0);
+    var completedBytes = 0;
+    var fileBlobs = [];
+    setLessonUploadStatus('reading', 'Reading ' + selected.length + (selected.length === 1 ? ' file…' : ' files…'), 0);
+    try {
+      for (var fileIndex = 0; fileIndex < selected.length; fileIndex += 1) {
+        var currentFile = selected[fileIndex];
+        var currentBlob = await readLessonFile(currentFile, function (loaded) {
+          var percent = (completedBytes + loaded) / totalUploadSize * 100;
+          setLessonUploadStatus('reading', 'Reading ' + currentFile.name + ' · ' + Math.round(percent) + '%', percent);
+        });
+        fileBlobs.push(currentBlob);
+        completedBytes += currentFile.size;
+      }
+    } catch (readError) {
+      setLessonUploadStatus('error', readError.message || 'A selected file could not be read.', 0);
+      throw readError;
+    }
     var uploadedAt = new Date().toISOString();
-    selected.forEach(function (file) {
+    selected.forEach(function (file, index) {
       var extension = String(file.name).split('.').pop().toLowerCase();
       var record = {
         id: replaceId || makeId(),
@@ -2275,16 +2380,23 @@
         size: file.size,
         lastModified: file.lastModified || 0,
         uploadedAt: uploadedAt,
-        data: file.slice(0, file.size, file.type || LESSON_FILE_TYPES[extension])
+        data: fileBlobs[index]
       };
       if (replaceId) {
         var index = state.lessonAttachments.findIndex(function (item) { return item.id === replaceId; });
         state.lessonAttachments[index] = record;
       } else state.lessonAttachments.push(record);
     });
+    setLessonUploadStatus('saving', 'Saving files to this browser…', 100);
     var saved = await saveState();
     render();
-    if (saved) toast(replaceId ? 'Lesson attachment replaced.' : selected.length + (selected.length === 1 ? ' file added.' : ' files added.'));
+    if (saved) {
+      setLessonUploadStatus('saved', 'Files saved in this browser.', 100);
+      window.setTimeout(function () { document.querySelector('#lesson-upload-status').hidden = true; }, 2600);
+      toast(replaceId ? 'Lesson attachment replaced.' : selected.length + (selected.length === 1 ? ' file added.' : ' files added.'));
+    } else {
+      setLessonUploadStatus('error', storageErrorMessage || 'The files could not be saved in browser storage.', 100);
+    }
   }
 
   function openLessonAttachment(file, download) {
@@ -2390,8 +2502,8 @@
       case 'add-schedule': openForm('schedule'); break;
       case 'add-class': openForm('classSchedule'); break;
       case 'add-subject': openForm('subject'); break;
-      case 'lesson-open-subject': lessonSubjectId = id; lessonSearch = ''; lessonStatusFilter = 'all'; lessonSort = 'order'; render(); main.focus({ preventScroll: true }); break;
-      case 'lesson-back': lessonSubjectId = ''; lessonSearch = ''; render(); break;
+      case 'lesson-open-subject': lessonSubjectId = id; lessonSearch = ''; lessonStatusFilter = 'all'; lessonSort = 'order'; lessonIntroPending = true; render(); main.focus({ preventScroll: true }); break;
+      case 'lesson-back': lessonSubjectId = ''; lessonSearch = ''; lessonIntroPending = true; render(); break;
       case 'lesson-add': lessonSubjectId = target.dataset.subject || lessonSubjectId; openForm('lesson', { subjectId: lessonSubjectId, lessonNumber: (state.lessons.filter(function (item) { return item.subjectId === lessonSubjectId; }).length + 1) }); break;
       case 'lesson-edit': record = getRecord('lessons', id); if (record) openForm('lesson', record); break;
       case 'lesson-delete':
