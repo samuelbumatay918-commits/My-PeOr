@@ -88,6 +88,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .global-search-wrap input:focus-visible { outline: 0; }
 .global-search-wrap .search-clear { width: 24px; height: 24px; font-size: 16px; }
 .top-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.storage-status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 20px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.storage-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.storage-status.is-saving i, .storage-status.is-loading i { background: var(--amber); }
+.storage-status.is-error { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); color: var(--red); }
+.storage-status.is-error i { background: var(--red); }
 .notification-button { position: relative; }
 .notification-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border: 1px solid var(--surface); border-radius: 50%; background: var(--red); }
 .nav-count { display: inline-grid; min-width: 17px; height: 17px; margin-left: auto; place-items: center; border-radius: 12px; background: var(--red-soft); color: var(--red); font-size: 9px; }
@@ -294,7 +299,7 @@ textarea { min-height: 84px; resize: vertical; }
   .section-grid.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { gap: 10px; }
   .global-search-wrap { width: min(250px, 25vw); }
-  .sync-badge { display: none; }
+  .storage-status { font-size: 9px; padding: 4px 6px; }
 }
 @media (max-width: 780px) {
   .sidebar, .sidebar.collapsed { width: 248px; transform: translateX(-100%); box-shadow: var(--shadow); }
@@ -309,14 +314,14 @@ textarea { min-height: 84px; resize: vertical; }
   .sidebar.mobile-open { transform: translateX(0); }
   .main-column { margin-left: 0; }
   .main-column.sidebar-collapsed { margin-left: 0; }
-  .mobile-menu { display: inline-grid; margin-right: 10px; }
+  .mobile-menu { display: inline-grid; margin-right: 4px; }
   .topbar { justify-content: flex-start; gap: 6px; padding: 0 14px; }
   .breadcrumb { flex: 0 1 auto; }
   .breadcrumb > span:first-child, .breadcrumb .crumb-divider { display: none; }
   .global-search-wrap { width: auto; min-width: 34px; flex: 1; margin-left: 0; }
   .top-actions { margin-left: auto; }
   .top-actions { gap: 5px; }
-  .sync-badge { display: none; }
+  .storage-status { gap: 4px; padding: 3px 5px; font-size: 8px; }
   #main-content { padding: 26px 18px 94px; }
   .app-footer { padding: 0 18px 18px; }
   .dashboard-grid { grid-template-columns: 1fr; }

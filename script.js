@@ -2,6 +2,10 @@
   'use strict';
 
   var STORAGE_KEY = 'mypeor.local.v1';
+  var LEGACY_STORAGE_KEY = STORAGE_KEY;
+  var DATABASE_VERSION = 1;
+  var DATABASE_NAME = 'mypeor.local.v1.' + (location.pathname.split('/').filter(Boolean)[0] || 'root').replace(/[^a-z0-9_-]/gi, '_');
+  var STATE_KEY = 'current';
   var todayKey = function () {
     var timeZone = state.preferences.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     var parts;
@@ -26,7 +30,8 @@
       quoteIndex: 0,
       notifications: [],
       dismissedReminders: [],
-      demoMode: false
+      demoMode: false,
+      schemaVersion: DATABASE_VERSION
     };
   };
 
@@ -48,6 +53,12 @@
   var customRange = { start: todayKey(), end: todayKey() };
   var timerInterval = null;
   var storageAvailable = true;
+  var databasePromise = null;
+  var saveQueue = Promise.resolve();
+  var saveRevision = 0;
+  var settingsSaveTimer = null;
+  var storageStatus = 'loading';
+  var storageErrorMessage = '';
 
   var main = document.querySelector('#main-content');
   var modal = document.querySelector('#modal');
@@ -55,26 +66,139 @@
   var modalTitle = document.querySelector('#modal-title');
   var modalReturnFocus = null;
 
-  function loadState() {
-    try {
-      var saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        var parsed = JSON.parse(saved);
-        var base = freshState();
-        Object.keys(base).forEach(function (key) {
-          if (parsed[key] !== undefined) base[key] = parsed[key];
-        });
-        base.preferences = Object.assign(freshState().preferences, parsed.preferences || {});
-        base.timer = Object.assign(freshState().timer, parsed.timer || {});
-        base.notifications = Array.isArray(parsed.notifications) ? parsed.notifications : [];
-        base.dismissedReminders = Array.isArray(parsed.dismissedReminders) ? parsed.dismissedReminders : [];
-        state = base;
+  function normalizeState(parsed, rejectInvalid) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Backup must contain a JSON object.');
+    var source = parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data) ? parsed.data : parsed;
+    if (source.schemaVersion && source.schemaVersion > DATABASE_VERSION) throw new Error('This backup was created by a newer My PeOr version. Update the website before importing it.');
+    var base = Object.assign(freshState(), source);
+    base.preferences = Object.assign(freshState().preferences, source.preferences || {});
+    base.timer = Object.assign(freshState().timer, source.timer || {});
+    if (!Array.isArray(base.timer.completedSessions)) {
+      if (source.timer && source.timer.completedSessions !== undefined) throw new Error('Backup timer sessions must be a list.');
+      base.timer.completedSessions = [];
+    }
+    var arrayKeys = ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications', 'dismissedReminders'];
+    arrayKeys.forEach(function (key) {
+      if (source[key] !== undefined && !Array.isArray(source[key])) throw new Error('Backup field "' + key + '" must be a list.');
+      if (!Array.isArray(base[key])) base[key] = [];
+    });
+    if (source.preferences !== undefined && (!source.preferences || typeof source.preferences !== 'object' || Array.isArray(source.preferences))) {
+      throw new Error('Backup preferences must be an object.');
+    }
+    if (source.timer !== undefined && (!source.timer || typeof source.timer !== 'object' || Array.isArray(source.timer))) {
+      throw new Error('Backup timer data must be an object.');
+    }
+    var ids = new Set();
+    ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications'].forEach(function (key) {
+      base[key].forEach(function (item) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Backup field "' + key + '" contains an invalid item.');
+        if (!item.id || ids.has(item.id)) {
+          if (rejectInvalid && item.id) throw new Error('Backup contains duplicate item IDs.');
+          item.id = makeId();
+        }
+        ids.add(item.id);
+      });
+    });
+    base.timer.completedSessions.forEach(function (session) {
+      if (!session || typeof session !== 'object' || Array.isArray(session)) throw new Error('Backup contains an invalid completed study session.');
+      if (!session.id || ids.has(session.id)) {
+        if (rejectInvalid && session.id) throw new Error('Backup contains duplicate item IDs.');
+        session.id = makeId();
       }
+      ids.add(session.id);
+    });
+    base.schemaVersion = DATABASE_VERSION;
+    return base;
+  }
+
+  function openDatabase() {
+    if (databasePromise) return databasePromise;
+    databasePromise = new Promise(function (resolve, reject) {
+      if (!window.indexedDB) {
+        reject(new Error('IndexedDB is not supported in this browser.'));
+        return;
+      }
+      var request;
+      try {
+        request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      request.onupgradeneeded = function () {
+        var database = request.result;
+        if (!database.objectStoreNames.contains('appState')) database.createObjectStore('appState', { keyPath: 'key' });
+      };
+      request.onsuccess = function () {
+        var database = request.result;
+        database.onversionchange = function () { database.close(); };
+        resolve(database);
+      };
+      request.onerror = function () { reject(request.error || new Error('Could not open IndexedDB.')); };
+      request.onblocked = function () { reject(new Error('IndexedDB upgrade is blocked by another open My PeOr tab. Close the other tab and reload.')); };
+    });
+    return databasePromise;
+  }
+
+  function readDatabaseState(database) {
+    return new Promise(function (resolve, reject) {
+      var transaction;
+      try {
+        transaction = database.transaction('appState', 'readonly');
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      var request = transaction.objectStore('appState').get(STATE_KEY);
+      request.onsuccess = function () {
+        try {
+          resolve(request.result ? normalizeState(request.result.state, false) : null);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      request.onerror = function () { reject(request.error || new Error('Could not read saved My PeOr data.')); };
+    });
+  }
+
+  async function loadState() {
+    try {
+      var database = await openDatabase();
+      var savedState = await readDatabaseState(database);
+      if (savedState) {
+        state = savedState;
+      } else {
+        var legacy = null;
+        try {
+          legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+        } catch (error) {
+          console.warn('Legacy localStorage could not be checked; continuing with IndexedDB.', error);
+        }
+        if (legacy) {
+          state = normalizeState(JSON.parse(legacy), false);
+          await writeState(database, state);
+          try {
+            localStorage.removeItem(LEGACY_STORAGE_KEY);
+          } catch (error) {
+            console.warn('Legacy localStorage data remains but has been migrated to IndexedDB.', error);
+          }
+        }
+      }
+      storageAvailable = true;
+      storageErrorMessage = '';
+      storageStatus = 'saved';
     } catch (error) {
       storageAvailable = false;
-      console.error('Unable to load My PeOr browser data.', error);
+      storageStatus = 'error';
+      storageErrorMessage = error && error.message ? error.message : 'Browser storage could not be opened.';
+      console.error('Unable to load My PeOr IndexedDB data.', error);
+      try {
+        var legacyData = localStorage.getItem(LEGACY_STORAGE_KEY);
+        if (legacyData) state = normalizeState(JSON.parse(legacyData), false);
+      } catch (legacyError) {
+        console.error('Unable to recover legacy My PeOr browser data.', legacyError);
+      }
     }
-
     if (state.timer.status === 'running' && state.timer.endAt && state.timer.endAt <= Date.now()) {
       state.timer.status = 'paused';
       state.timer.remainingMs = 0;
@@ -92,18 +216,59 @@
     });
   }
 
+  function writeState(database, value) {
+    return new Promise(function (resolve, reject) {
+      var transaction;
+      try {
+        transaction = database.transaction('appState', 'readwrite');
+        transaction.objectStore('appState').put({ key: STATE_KEY, schemaVersion: DATABASE_VERSION, updatedAt: new Date().toISOString(), state: value });
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      transaction.oncomplete = function () { resolve(); };
+      transaction.onerror = function () { reject(transaction.error || new Error('Could not save changes to browser storage.')); };
+      transaction.onabort = function () { reject(transaction.error || new Error('Browser storage transaction was cancelled.')); };
+    });
+  }
+
+  function setStorageStatus(status, message) {
+    storageStatus = status;
+    storageErrorMessage = message || '';
+    storageAvailable = status !== 'error';
+    var indicator = document.querySelector('#storage-status');
+    if (!indicator) return;
+    var labels = { loading: 'Loading…', saving: 'Saving…', saved: 'Saved locally', error: 'Unable to save' };
+    indicator.className = 'storage-status is-' + status;
+    indicator.querySelector('span').textContent = labels[status] || 'Storage status';
+    indicator.title = message || (status === 'saved' ? 'Your changes are saved in this browser.' : status === 'saving' ? 'Saving changes to this browser.' : 'Loading saved browser data.');
+    indicator.setAttribute('aria-label', labels[status] + (message ? ': ' + message : ''));
+  }
+
   function saveState() {
+    syncReminderQueue();
+    state.schemaVersion = DATABASE_VERSION;
+    var revision = ++saveRevision;
+    var snapshot;
     try {
-      syncReminderQueue();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      storageAvailable = true;
-      return true;
+      snapshot = JSON.parse(JSON.stringify(state));
     } catch (error) {
-      storageAvailable = false;
-      console.error('Unable to save My PeOr browser data.', error);
-      toast('Could not save changes to this browser. Check storage permissions or available space.', true);
-      return false;
+      setStorageStatus('error', 'The current data could not be prepared for saving.');
+      console.error('Unable to serialize My PeOr browser data.', error);
+      return;
     }
+    setStorageStatus('saving');
+    saveQueue = saveQueue.catch(function () {}).then(async function () {
+      var database = await openDatabase();
+      await writeState(database, snapshot);
+      if (revision === saveRevision) setStorageStatus('saved');
+    }).catch(function (error) {
+      if (revision === saveRevision) {
+        setStorageStatus('error', error && error.message ? error.message : 'Browser storage rejected the save.');
+        console.error('Unable to save My PeOr IndexedDB data.', error);
+        toast('Unable to save locally. Export your data if it is still visible, then check browser storage permissions.', true);
+      }
+    });
   }
 
   function escapeHtml(value) {
@@ -652,8 +817,8 @@
     var todayDate = parseDate(today);
     var dayOfYear = Math.floor((Date.UTC(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate()) - Date.UTC(todayDate.getFullYear(), 0, 1)) / 86400000);
     var quote = quoteList[(dayOfYear + state.quoteIndex) % quoteList.length];
-    var notice = storageAvailable ? '<div class="notice warning" style="margin-bottom:18px"><strong>Local demo mode.</strong> Your data is saved in this browser only. Sign-in and cross-device cloud sync are not configured. See Settings for the backend setup required.' + (state.demoMode ? ' Sample records are loaded and marked as demo data; remove them from Settings at any time.' : '') + '</div>' :
-      '<div class="notice error" style="margin-bottom:18px">Browser storage is unavailable. Changes may not persist after this page is closed.</div>';
+    var notice = storageAvailable ? '<div class="notice info" style="margin-bottom:18px"><strong>Saved in this browser.</strong> No account is needed. Your data stays in this browser profile on this device; it is not uploaded or synced.</div>' :
+      '<div class="notice error" style="margin-bottom:18px"><strong>Your data could not be saved.</strong> ' + escapeHtml(storageErrorMessage || 'Browser storage is unavailable.') + ' Keep this page open and export a backup before leaving if your unsaved changes are still visible.</div>';
 
     return notice +
       '<div class="welcome-row"><div><p class="eyebrow">Your overview</p><h1 class="greeting">' + currentTimeGreeting() + (state.preferences.name ? ', ' + escapeHtml(state.preferences.name) : '') + '</h1><p class="greeting-sub">Let’s make today productive.</p>' +
@@ -1173,6 +1338,7 @@
     if ('Notification' in window) permission = Notification.permission;
     return pageHeading('Settings', 'Personalize your organizer and manage local data.', '') +
       '<div class="section-grid"><section class="card"><div class="card-title-row"><h2>Profile &amp; preferences</h2></div>' +
+      '<p class="small-note">Changes save automatically in this browser.</p>' +
       '<form data-form="settings" class="form-grid">' +
       settingsInput('Your name', 'name', p.name, 'text', 'Shown in your greeting') +
       settingsSelect('Theme', 'theme', p.theme, [['system', 'System default'], ['light', 'Light'], ['dark', 'Dark']]) +
@@ -1182,16 +1348,16 @@
       settingsInput('Focus duration (minutes)', 'focusMinutes', p.focusMinutes, 'number', '', 1) +
       settingsInput('Short break (minutes)', 'shortBreakMinutes', p.shortBreakMinutes, 'number', '', 1) +
       settingsInput('Long break (minutes)', 'longBreakMinutes', p.longBreakMinutes, 'number', '', 1) +
-      '<div class="form-field full"><button class="button primary" type="submit">Save preferences</button></div></form></section>' +
+      '</form></section>' +
       '<div class="stack"><section class="card"><div class="card-title-row"><h2>Reminders &amp; notifications</h2><span class="status-pill">' + escapeHtml(permission) + '</span></div><p class="small-note">In-app reminders are checked while My PeOr is open. Browser notifications are optional and require your permission. There is no background notification service configured.</p>' +
       '<button class="button" data-action="notifications"' + (permission === 'denied' || permission === 'unsupported' ? ' disabled' : '') + '>' + (permission === 'denied' ? 'Blocked in browser settings' : permission === 'unsupported' ? 'Browser notifications unavailable' : p.notifications ? 'Disable browser notifications' : 'Enable browser notifications') + '</button>' +
       (permission === 'denied' ? '<p class="small-note">To try browser alerts again, allow notifications for this site in your browser settings. In-app reminders remain available while My PeOr is open.</p>' : '') +
       (reminders.length ? '<div class="task-list" style="margin-top:12px">' + reminders.map(function (item) { return '<div class="simple-row"><span class="row-info"><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(dateTimeLabel(new Date(item.remindAt).toISOString())) + '</small></span></div>'; }).join('') + '</div>' : '<p class="small-note">No upcoming reminders configured.</p>') + '</section>' +
-      '<section class="card"><div class="card-title-row"><h2>Data &amp; account</h2></div><div class="notice warning"><strong>Cloud account is not configured.</strong> This site currently has no authentication provider or database. Browser data is not a secure account and is not synchronized to other devices.</div>' +
-      '<div class="setting-row"><div><strong>Local demo data</strong><small>' + (state.demoMode ? 'Sample records are loaded. They are marked as demo data.' : 'No sample records loaded.') + '</small></div><button class="button" data-action="demo">' + (state.demoMode ? 'Remove demo data' : 'Try demo data') + '</button></div>' +
-      '<div class="setting-row"><div><strong>Export data</strong><small>Download a JSON copy of this browser workspace.</small></div><button class="button" data-action="export">Export JSON</button></div>' +
-      '<div class="setting-row"><div><strong>Clear all local data</strong><small>Deletes this browser workspace and preferences.</small></div><button class="button danger" data-action="clear-data">Clear data</button></div></section></div></div>' +
-      '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Cloud setup required</h2></div><p class="small-note">For secure sign-in and multi-device sync, connect a backend such as Supabase Auth + Postgres. Store only the public project URL and anon key in public configuration; enable Row Level Security and owner-based policies on every user table. Never put service-role keys in this frontend. Setup guidance is in README.md.</p></section>';
+      '<section class="card"><div class="card-title-row"><h2>Data &amp; privacy</h2></div><div class="notice info"><strong>No account required.</strong> Organizer data is saved in this browser profile and is not sent to a server. It is not synchronized across devices and is not an account-based secure backup.</div>' +
+      '<div class="setting-row"><div><strong>Export backup</strong><small>Download all locally stored organizer data as a JSON backup.</small></div><button class="button" data-action="export">Export Backup</button></div>' +
+      '<div class="setting-row"><div><strong>Import backup</strong><small>Validate a JSON backup, then replace the data in this browser.</small></div><button class="button" data-action="import-backup">Import Backup</button></div>' +
+      '<div class="setting-row"><div><strong>Clear all data</strong><small>Permanently deletes all My PeOr items and preferences stored in this browser.</small></div><button class="button danger" data-action="clear-data">Clear All Data</button></div></section></div></div>' +
+      '<section class="card" style="margin-top:16px"><div class="card-title-row"><h2>Local data &amp; privacy</h2></div><div class="notice info"><strong>No account required.</strong> My PeOr saves your organizer data in IndexedDB in this browser profile. Data is not sent to a server, is not synchronized across devices, and may be cleared if browser site data is removed.</div></section>';
   }
 
   function settingsInput(label, name, value, type, hint, min) {
@@ -1200,6 +1366,37 @@
 
   function settingsSelect(label, name, value, choices) {
     return '<div class="form-field"><label for="setting-' + name + '">' + label + '</label><select id="setting-' + name + '" name="' + name + '">' + choices.map(function (choice) { return '<option value="' + choice[0] + '"' + (value === choice[0] ? ' selected' : '') + '>' + choice[1] + '</option>'; }).join('') + '</select></div>';
+  }
+
+  function savePreferences(form, reportErrors) {
+    var data = Object.fromEntries(new FormData(form).entries());
+    if (!data.timezone.trim()) {
+      if (reportErrors) formError(form, 'Timezone is required (for example, Asia/Manila).');
+      return false;
+    }
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: data.timezone }).format(new Date());
+    } catch (error) {
+      if (reportErrors) formError(form, 'Enter a valid timezone, such as Asia/Manila.');
+      return false;
+    }
+    var durations = ['focusMinutes', 'shortBreakMinutes', 'longBreakMinutes'];
+    for (var i = 0; i < durations.length; i += 1) {
+      var key = durations[i];
+      if (!Number.isInteger(Number(data[key])) || Number(data[key]) < 1 || Number(data[key]) > 180) {
+        if (reportErrors) formError(form, 'Pomodoro durations must be whole numbers between 1 and 180 minutes.');
+        return false;
+      }
+      data[key] = Number(data[key]);
+    }
+    var durationChanged = durations.some(function (key) { return Number(state.preferences[key]) !== data[key]; });
+    state.preferences = Object.assign(state.preferences, data);
+    if (durationChanged && state.timer.status !== 'running') state.timer.remainingMs = getPhaseMinutes() * 60000;
+    saveState();
+    applyTheme();
+    document.querySelector('#sidebar-name').textContent = state.preferences.name || 'My Organizer';
+    document.querySelector('#sidebar-avatar').textContent = (state.preferences.name || 'M').trim().charAt(0).toUpperCase();
+    return true;
   }
 
   function applyTheme() {
@@ -1227,6 +1424,7 @@
   function render() {
     if (!pages[currentPage]) currentPage = 'dashboard';
     if (syncReminderQueue()) saveState();
+    setStorageStatus(storageStatus, storageErrorMessage);
     document.querySelector('#current-section').textContent = pages[currentPage][0];
     document.querySelectorAll('.nav-item[data-page]').forEach(function (button) {
       button.classList.toggle('active', button.dataset.page === currentPage);
@@ -1515,39 +1713,90 @@
     saveState(); render();
   }
 
-  function loadDemo() {
-    if (state.demoMode) {
-      if (!window.confirm('Remove the sample demo records? This will only remove demo records.')) return;
-      state.tasks = state.tasks.filter(function (item) { return !item.demo; });
-      state.exams = state.exams.filter(function (item) { return !item.demo; });
-      state.subjects = state.subjects.filter(function (item) { return !item.demo; });
-      state.habits = state.habits.filter(function (item) { return !item.demo; });
-      state.habitLogs = state.habitLogs.filter(function (item) { return !item.demo; });
-      state.demoMode = false;
-    } else {
-      var demoSubject = { id: makeId(), name: 'Discrete Structures', code: 'CS 201', instructor: '', period: 'Sample data', description: '', demo: true };
-      var codingSubject = { id: makeId(), name: 'Introduction to Programming', code: 'CS 101', instructor: '', period: 'Sample data', description: '', demo: true };
-      state.subjects.push(demoSubject, codingSubject);
-      state.tasks.push(
-        { id: makeId(), title: 'Review Discrete Structures', description: 'Sample task — edit or remove it.', dueDate: todayKey(), dueTime: '', priority: 'Medium', status: 'To Do', category: 'Study', subjectId: demoSubject.id, createdAt: new Date().toISOString(), demo: true },
-        { id: makeId(), title: 'Practice C++ programming', description: 'Sample task — edit or remove it.', dueDate: todayKey(), dueTime: '', priority: 'High', status: 'To Do', category: 'Study', subjectId: codingSubject.id, createdAt: new Date().toISOString(), demo: true }
-      );
-      state.exams.push({ id: makeId(), title: 'Discrete Structures Quiz', subjectId: demoSubject.id, date: todayKey(), time: '', topics: '', prepStatus: 'Not Started', priority: 'Medium', notes: '', demo: true });
-      state.habits.push({ id: makeId(), name: 'Review lessons for 20 minutes', description: 'Sample habit', frequency: 'Daily', weeklyTarget: 3, active: 'Active', startDate: todayKey(), demo: true });
-      state.demoMode = true;
-    }
-    saveState(); render(); toast(state.demoMode ? 'Sample records added. They are labeled demo data.' : 'Sample records removed.');
+  function hasUserData(value) {
+    var defaults = freshState();
+    return ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'notifications']
+      .some(function (key) { return value[key] && value[key].length; }) ||
+      (value.dismissedReminders && value.dismissedReminders.length) ||
+      Object.keys(defaults.preferences).some(function (key) { return value.preferences[key] !== defaults.preferences[key]; }) ||
+      Object.keys(defaults.timer).some(function (key) {
+        if (key === 'completedSessions') return value.timer.completedSessions && value.timer.completedSessions.length;
+        return JSON.stringify(value.timer[key]) !== JSON.stringify(defaults.timer[key]);
+      }) || value.quoteIndex !== 0 || value.demoMode;
   }
 
   function exportData() {
-    var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    var backup = {
+      app: 'My PeOr',
+      schemaVersion: DATABASE_VERSION,
+      exportedAt: new Date().toISOString(),
+      data: state
+    };
+    var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
     link.href = url;
-    link.download = 'my-peor-data-' + todayKey() + '.json';
+    link.download = 'my-peor-backup-' + todayKey() + '.json';
     link.click();
-    URL.revokeObjectURL(url);
-    toast('Data export downloaded.');
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    toast('My PeOr backup downloaded.');
+  }
+
+  async function importBackup(file) {
+    try {
+      var parsed = JSON.parse(await file.text());
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Backup must contain a JSON object.');
+      if (parsed.schemaVersion && parsed.schemaVersion > DATABASE_VERSION) throw new Error('This backup was created by a newer My PeOr version. Update the website before importing it.');
+      var knownKeys = ['tasks', 'schedule', 'subjects', 'assessments', 'exams', 'studySessions', 'habits', 'habitLogs', 'preferences', 'timer', 'notifications'];
+      var source = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed;
+      if (!source || !knownKeys.some(function (key) { return Object.prototype.hasOwnProperty.call(source, key); })) {
+        throw new Error('This file does not contain a My PeOr backup.');
+      }
+      var importedState = normalizeState(parsed, true);
+      if (hasUserData(state) && !window.confirm('Importing this backup will replace all My PeOr data currently saved in this browser. Export a backup first if you want to keep it. Continue?')) return;
+      await saveQueue.catch(function () {});
+      try {
+        var database = await openDatabase();
+        await writeState(database, importedState);
+      } catch (storageError) {
+        setStorageStatus('error', storageError.message || 'The backup could not be saved in IndexedDB.');
+        throw storageError;
+      }
+      state = importedState;
+      saveRevision += 1;
+      storageErrorMessage = '';
+      setStorageStatus('saved');
+      render();
+      toast('My PeOr backup imported successfully.');
+    } catch (error) {
+      console.error('Unable to import My PeOr backup.', error);
+      toast(error && error.message ? error.message : 'The backup could not be imported.', true);
+    }
+  }
+
+  async function clearAllData() {
+    if (!window.confirm('Permanently delete all My PeOr data saved in this browser? This cannot be undone.')) return;
+    try {
+      await saveQueue.catch(function () {});
+      var database = await openDatabase();
+      var emptyState = freshState();
+      await writeState(database, emptyState);
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch (error) {
+        console.warn('Legacy localStorage data could not be removed; the cleared IndexedDB state will take precedence.', error);
+      }
+      state = emptyState;
+      saveRevision += 1;
+      storageErrorMessage = '';
+      setStorageStatus('saved');
+      render();
+      toast('All My PeOr data was cleared from this browser.');
+    } catch (error) {
+      setStorageStatus('error', error && error.message ? error.message : 'Browser data could not be cleared.');
+      console.error('Unable to clear My PeOr IndexedDB data.', error);
+      toast('Unable to clear locally stored data. ' + storageErrorMessage, true);
+    }
   }
 
   function handleAction(action, target) {
@@ -1669,12 +1918,10 @@
       case 'timer-reset': resetTimer(); break;
       case 'timer-skip': skipTimer(); break;
       case 'close-modal': closeModal(); break;
-      case 'demo': loadDemo(); break;
       case 'export': exportData(); break;
+      case 'import-backup': document.querySelector('#import-backup-file').click(); break;
       case 'clear-data':
-        if (window.confirm('Permanently clear all My PeOr data stored in this browser?')) {
-          state = freshState(); saveState(); render(); toast('Local data cleared.');
-        }
+        clearAllData();
         break;
       case 'notifications':
         if (!('Notification' in window)) { toast('Browser notifications are not supported here. In-app reminders remain available.', true); break; }
@@ -1748,6 +1995,12 @@
     if (button) setPage(button.dataset.page);
   });
 
+  document.querySelector('#import-backup-file').addEventListener('change', function (event) {
+    var file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (file) importBackup(file);
+  });
+
   main.addEventListener('click', function (event) {
     var pageLink = event.target.closest('[data-page-link]');
     if (pageLink) { setPage(pageLink.dataset.pageLink); return; }
@@ -1757,6 +2010,10 @@
 
   main.addEventListener('change', function (event) {
     var target = event.target;
+    if (target.closest('[data-form="settings"]')) {
+      if (savePreferences(target.form, true)) render();
+      return;
+    }
     if (target.matches('[data-action="toggle-task"], [data-action="toggle-habit"]')) {
       handleAction(target.dataset.action, target);
       return;
@@ -1784,6 +2041,15 @@
   });
 
   main.addEventListener('input', function (event) {
+    if (event.target.closest('[data-form="settings"]')) {
+      window.clearTimeout(settingsSaveTimer);
+      settingsSaveTimer = window.setTimeout(function () {
+        if (savePreferences(event.target.form, false) && event.target.form.dataset.form === 'settings') {
+          if (currentPage === 'dashboard' && event.target.name === 'name') render();
+        }
+      }, 250);
+      return;
+    }
     if (event.target.name === 'task-search') {
       var position = event.target.selectionStart;
       taskSearch = event.target.value;
@@ -1799,24 +2065,9 @@
   main.addEventListener('submit', function (event) {
     if (event.target.matches('[data-form="settings"]')) {
       event.preventDefault();
-      var data = Object.fromEntries(new FormData(event.target).entries());
-      if (!data.timezone.trim()) return formError(event.target, 'Timezone is required (for example, Asia/Manila).');
-      try {
-        new Intl.DateTimeFormat('en', { timeZone: data.timezone }).format(new Date());
-      } catch (error) {
-        return formError(event.target, 'Enter a valid timezone, such as Asia/Manila.');
+      if (savePreferences(event.target, true)) {
+        render();
       }
-      ['focusMinutes', 'shortBreakMinutes', 'longBreakMinutes'].forEach(function (key) {
-        if (!Number.isInteger(Number(data[key])) || Number(data[key]) < 1 || Number(data[key]) > 180) {
-          formError(event.target, 'Pomodoro durations must be whole numbers between 1 and 180 minutes.');
-          return;
-        }
-        data[key] = Number(data[key]);
-      });
-      if (!Number.isInteger(data.focusMinutes) || !Number.isInteger(data.shortBreakMinutes) || !Number.isInteger(data.longBreakMinutes)) return;
-      state.preferences = Object.assign(state.preferences, data);
-      if (state.timer.status !== 'running') state.timer.remainingMs = getPhaseMinutes() * 60000;
-      saveState(); render(); toast('Preferences saved in this browser.');
       return;
     }
     if (event.target.matches('[data-form]')) {
@@ -1849,8 +2100,19 @@
     }
   });
 
-  function init() {
-    loadState();
+  window.addEventListener('beforeunload', function (event) {
+    if (storageStatus !== 'saving') return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  async function init() {
+    document.querySelector('.app-shell').inert = true;
+    document.querySelector('.mobile-bottom-nav').inert = true;
+    setStorageStatus('loading');
+    await loadState();
+    document.querySelector('.app-shell').inert = false;
+    document.querySelector('.mobile-bottom-nav').inert = false;
     selectedDate = todayKey();
     calendarDate = parseDate(selectedDate);
     if (!state.timer.remainingMs || state.timer.status === 'idle') state.timer.remainingMs = getPhaseMinutes() * 60000;
@@ -1864,5 +2126,8 @@
     }, 30000);
   }
 
-  init();
+  init().catch(function (error) {
+    setStorageStatus('error', error && error.message ? error.message : 'My PeOr could not load its saved data.');
+    console.error('Unable to start My PeOr.', error);
+  });
 }());
